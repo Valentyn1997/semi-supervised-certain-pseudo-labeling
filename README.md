@@ -11,7 +11,7 @@ Starting (from the project's root):
 Remote connection via ssh:
 `ssh -N -f -L localhost:5000:localhost:5000 <user>@10.195.1.189`
 
-Than one can access [http://localhost:5000]()
+Than one can access [localhost:5000](http://localhost:5000)
 
 
 Project Organization
