@@ -3,6 +3,17 @@ semi_supervised_certain_pseudo_labeling
 
 Applying uncertanty estimation to semi-supervised image classification methods
 
+## MLFLOW server
+
+Starting (from the project's root):
+`mlflow server --default-artifact-root='/home/ubuntu/semi_supervised_certain_pseudo_labeling/mlruns/'`
+
+Remote connection via ssh:
+`ssh -N -f -L localhost:5000:localhost:5000 <user>@10.195.1.189`
+
+Than one can access [http://localhost:5000]()
+
+
 Project Organization
 ------------
 
