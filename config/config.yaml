@@ -1,0 +1,41 @@
+# Model params
+model: # Model params
+  mu: 4  # 4 per GPU
+  threshold: 0.8
+  lambda_u: 5.0
+
+# Data params
+data:
+  source: ???   #  CIFAR10 / CIFAR100 / SVHN / STL10
+  n_labelled: ???    # Number of labelled images to use from train, all the otther images become unlabelled
+  val_ratio: 0.1  # The size of the validation set based on the train-set
+  batch_size:  # Batch size per GPU/CPU for training
+    train: 16
+    val: 32
+    test: 32
+  weak_aug:
+    flip: True
+    random_resize_crop:
+      size: (32, 32)
+      scale: (0.7, 1.0)
+
+# Experiment
+exp:
+  logging: True   # Logging to MlFlow
+  max_epochs: 1000  # Total number of training epochs to perform.
+  early_stopping_patience: 100  #  Number of epochs to wait for early stopping
+  seed: 45  # random seed for initialization
+  checkpoint: True  # Saving best model in RAM and then using it for test
+  gpus: '-1'
+
+# Optimizer
+optimizer:
+  momentum: 0.9
+  nesterov: True
+  lr: 0.03  # The initial learning rate for Adam
+  auto_lr_find: False  # Auto lr-finding before training
+
+# Hydra defaults
+defaults:
+  - hydra/job_logging: colorlog
+  - hydra/hydra_logging: colorlog
