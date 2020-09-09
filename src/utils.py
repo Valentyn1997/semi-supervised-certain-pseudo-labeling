@@ -26,7 +26,7 @@ class CustomModelCheckpoint(ModelCheckpoint):
 
     # modify saving
     def _save_model(self, filepath, trainer, pl_module):
-        self.model.best_model = deepcopy(self.model.model)
+        self.model.best_model = deepcopy(self.model.ema_model)
         if self.model.hparams.exp.logging:
             self.model.trainer.logger.log_metrics({'best_epoch': self.model.trainer.current_epoch + 1},
                                                   step=self.model.trainer.global_step)

@@ -240,12 +240,57 @@ class StrongAugment(object):
         return self.strong(inp)
 
 
+def pad(x, border=4):
+    return np.pad(x, [(0, 0), (border, border), (border, border)], mode='reflect')
+
+
+class RandomPadandCrop(object):
+    """Crop randomly the image.
+
+    Args:
+        output_size (tuple or int): Desired output size. If int, square crop
+            is made.
+    """
+
+    def __init__(self, width=4, output_size=None):
+        self.width = width
+        if output_size is None:
+            self.output_size = output_size
+        # assert isinstance(output_size, (int, tuple))
+        elif isinstance(output_size, int):
+            self.output_size = (output_size, output_size)
+        else:
+            assert len(output_size) == 2
+            self.output_size = output_size
+
+    def __call__(self, x):
+        old_h, old_w = x.size[:2]
+        x = np.transpose(x, (2, 0, 1))
+        x = pad(x, self.width)
+
+        h, w = x.shape[1:]
+        if self.output_size is None:
+            new_h, new_w = old_h, old_w
+        else:
+            new_h, new_w = self.output_size
+
+        top = np.random.randint(0, h - new_h)
+        left = np.random.randint(0, w - new_w)
+
+        x = x[:, top: top + new_h, left: left + new_w]
+
+        return Image.fromarray(np.transpose(x, (1, 2, 0)))
+
+
 class WeakAugment(object):
-    def __init__(self, basic_transform: BasicTransformation, flip=None, random_resize_crop=None):
+    def __init__(self, basic_transform: BasicTransformation, flip=None, random_resize_crop=None, random_pad_and_crop=None):
         self.weak = []
 
         if random_resize_crop:
             self.weak.append(transforms.RandomResizedCrop(eval(random_resize_crop['size']), eval(random_resize_crop['scale'])))
+
+        if random_pad_and_crop:
+            self.weak.append(RandomPadandCrop())
 
         if flip:
             self.weak.append(transforms.RandomHorizontalFlip())

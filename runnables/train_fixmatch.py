@@ -26,17 +26,18 @@ def main(args: DictConfig):
     if args.exp.logging:
         experiment_name = f'FixMatch/{dataset_name}'
         mlf_logger = MLFlowLogger(experiment_name=experiment_name, tracking_uri=MLFLOW_URI)
+
         run_id = mlf_logger.run_id
         experiment_id = mlf_logger.experiment.get_experiment_by_name(experiment_name).experiment_id
-        cpnt_path = f'{ROOT_PATH}/mlruns/{experiment_id}/{run_id}/artifacts'
+        artifacts_path = f'{ROOT_PATH}/mlruns/{experiment_id}/{run_id}/artifacts'
     else:
-        cpnt_path = None
+        artifacts_path = None
 
     # Loading dataset, augmentations and model
     set_seed(args)
     basic_transform = BasicTransformation(source=args.data.source)
     train_l_transform = WeakAugment(basic_transform=basic_transform, flip=args.data.weak_aug.flip,
-                                    random_resize_crop=args.data.weak_aug.random_resize_crop)
+                                    random_pad_and_crop=args.data.weak_aug.random_pad_and_crop)
     train_ul_transform = WeakStrongAugment(weak_augment=train_l_transform,
                                            strong_augment=StrongAugment(basic_transform))
     datasets_collection = SLLDatasetsCollection(source=args.data.source,
@@ -46,7 +47,7 @@ def main(args: DictConfig):
                                                 train_l_transform=train_l_transform,
                                                 train_ul_transform=train_ul_transform,
                                                 test_transform=basic_transform)
-    model = FixMatch(args, datasets_collection)
+    model = FixMatch(args, datasets_collection, artifacts_path=artifacts_path if args.exp.log_artifacts else None)
 
     # Early stopping & Checkpointing
     early_stop_callback = EarlyStopping(monitor='val_loss', min_delta=0.00, patience=args.exp.early_stopping_patience,
@@ -59,14 +60,11 @@ def main(args: DictConfig):
     trainer = Trainer(gpus=eval(str(args.exp.gpus)),
                       logger=mlf_logger if args.exp.logging else None,
                       max_epochs=args.exp.max_epochs,
-                      early_stop_callback=early_stop_callback,
+                      early_stop_callback=early_stop_callback if args.exp.early_stopping else None,
                       checkpoint_callback=checkpoint_callback if args.exp.checkpoint else None,
                       auto_lr_find=args.optimizer.auto_lr_find)
     trainer.fit(model)
-
-    # Testing doesn't work for dp mode
-    model.model = model.best_model
-    trainer.run_evaluation(test_mode=True)
+    trainer.test(model)
 
     # Ending the run
     if args.exp.logging:

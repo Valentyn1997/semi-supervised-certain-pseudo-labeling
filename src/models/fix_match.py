@@ -1,3 +1,4 @@
+import torchvision.utils as vutils
 from pytorch_lightning import LightningModule
 from omegaconf import DictConfig
 import torch
@@ -5,20 +6,25 @@ import torch.nn.functional as F
 from torch.optim import SGD
 from torch.utils.data import DataLoader
 import numpy as np
+from copy import deepcopy
 
 from src.utils import simple_accuracy
+from src.models.utils import WeightEMA
 from src.models.backbones import WideResNet
 from src.data.ssl_datasets import SLLDatasetsCollection, FixMatchCompositeTrainDataset
 
 
 class FixMatch(LightningModule):
-    def __init__(self, args: DictConfig, datasets_collection: SLLDatasetsCollection):
+    def __init__(self, args: DictConfig, datasets_collection: SLLDatasetsCollection, artifacts_path: str = None):
         super().__init__()
         self.lr = None  # Placeholder for auto_lr_find
+        self.artifacts_path = artifacts_path
         self.datasets_collection = datasets_collection
         self.model = WideResNet(depth=28, widen_factor=2, drop_rate=0.0, num_classes=len(datasets_collection.classes))
+        self.ema_model = WideResNet(depth=28, widen_factor=2, drop_rate=0.0, num_classes=len(datasets_collection.classes))
         self.best_model = self.model  # Placeholder for checkpointing
         self.hparams = args  # Will be logged to mlflow
+        self.ema_optimizer = WeightEMA(self.model, self.ema_model, alpha=self.hparams.model.ema_decay)
 
     def prepare_data(self):
         self.train_dataset = FixMatchCompositeTrainDataset(self.datasets_collection.train_l_dataset,
@@ -26,12 +32,20 @@ class FixMatch(LightningModule):
                                                            self.hparams.model.mu)
         self.val_dataset = self.datasets_collection.val_dataset
         self.test_dataset = self.datasets_collection.test_dataset
+        self.hparams.data_size = DictConfig({
+            'train': {
+                'lab': len(self.train_dataset.l_dataset),
+                'unlab': len(self.train_dataset.ul_dataset)
+            },
+            'val': len(self.val_dataset),
+            'test': len(self.test_dataset)
+        })
 
     def configure_optimizers(self):
         if self.lr is not None:  # After auto_lr_find
             self.hparams.optimizer.lr = self.lr
         return SGD(self.model.parameters(), lr=self.hparams.optimizer.lr, momentum=self.hparams.optimizer.momentum,
-                   nesterov=self.hparams.optimizer.nesterov)
+                   nesterov=self.hparams.optimizer.nesterov, weight_decay=self.hparams.optimizer.weight_decay)
 
     def train_dataloader(self) -> DataLoader:
         return DataLoader(self.train_dataset, shuffle=True, batch_size=self.hparams.data.batch_size.train, num_workers=2)
@@ -42,8 +56,17 @@ class FixMatch(LightningModule):
     def test_dataloader(self) -> DataLoader:
         return DataLoader(self.test_dataset, shuffle=False, batch_size=self.hparams.data.batch_size.test)
 
-    def forward(self, batch):
-        return self.model(batch)
+    def optimizer_step(self, *args, **kwargs) -> None:
+        super().optimizer_step(*args, **kwargs)
+        self.ema_optimizer.step()
+
+    def forward(self, batch, model=None):
+        if model is None:
+            return self.model(batch)
+        elif model == 'best':
+            return self.best_model(batch)
+        elif model == 'ema':
+            return self.ema_model(batch)
 
     def training_step(self, composite_batch, batch_idx):
         l_targets = composite_batch[0][0][1]
@@ -74,14 +97,22 @@ class FixMatch(LightningModule):
     def validation_step(self, batch, batch_idx):
         results = {}
         images, targets = batch
-        logits = self(images)
+        logits = self(images, model='ema')
         loss = F.cross_entropy(logits, targets, reduction='mean')
         results['loss'] = loss.detach()
         results['preds'] = logits.detach()
         results['labels'] = targets.detach()
         return results
 
-    test_step = validation_step
+    def test_step(self, batch, batch_idx):
+        results = {}
+        images, targets = batch
+        logits = self(images, model='best')
+        loss = F.cross_entropy(logits, targets, reduction='mean')
+        results['loss'] = loss.detach()
+        results['preds'] = logits.detach()
+        results['labels'] = targets.detach()
+        return results
 
     def training_epoch_end(self, outputs):
         loss = np.array([x['loss'].mean().item() for x in outputs]).mean()
@@ -108,3 +139,23 @@ class FixMatch(LightningModule):
         return {
             prefix + '_acc': simple_accuracy(preds, labels)
         }
+
+    def on_train_start(self) -> None:
+        if self.artifacts_path is not None:  # Plotting one batch
+            composite_batch = next(iter(self.train_dataloader()))
+
+            l_images = composite_batch[0][0][0]
+            uw_images = torch.cat([item[0][0] for item in composite_batch[1]])
+            us_images = torch.cat([item[0][1] for item in composite_batch[1]])
+
+            img = vutils.make_grid(l_images, padding=5, normalize=True)
+            img_path = f'{self.artifacts_path}/train_labelled.png'
+            vutils.save_image(img, img_path)
+
+            img = vutils.make_grid(us_images, padding=5, normalize=True, nrow=16)
+            img_path = f'{self.artifacts_path}/train_unlabelled_strong.png'
+            vutils.save_image(img, img_path)
+
+            img = vutils.make_grid(uw_images, padding=5, normalize=True, nrow=16)
+            img_path = f'{self.artifacts_path}/train_unlabelled_weak.png'
+            vutils.save_image(img, img_path)
