@@ -6,6 +6,7 @@ import torch.nn.functional as F
 
 logger = logging.getLogger(__name__)
 
+
 # Credits to https://github.com/kekmodel/FixMatch-pytorch/blob/master/models/wideresnet.py
 
 
@@ -38,7 +39,7 @@ class BasicBlock(nn.Module):
         self.activate_before_residual = activate_before_residual
 
     def forward(self, x):
-        if not self.equalInOut and self.activate_before_residual == True:
+        if not self.equalInOut and self.activate_before_residual:
             x = self.relu1(self.bn1(x))
         else:
             out = self.relu1(self.bn1(x))
@@ -69,8 +70,8 @@ class NetworkBlock(nn.Module):
 class WideResNet(nn.Module):
     def __init__(self, num_classes, depth=28, widen_factor=2, drop_rate=0.0):
         super(WideResNet, self).__init__()
-        channels = [16, 16*widen_factor, 32*widen_factor, 64*widen_factor]
-        assert((depth - 4) % 6 == 0)
+        channels = [16, 16 * widen_factor, 32 * widen_factor, 64 * widen_factor]
+        assert ((depth - 4) % 6 == 0)
         n = (depth - 4) / 6
         block = BasicBlock
         # 1st conv before any network block

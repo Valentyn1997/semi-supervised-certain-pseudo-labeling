@@ -5,7 +5,6 @@ from src import DATA_PATH
 from os.path import exists
 from os import mkdir
 import logging
-import torchvision.transforms as transforms
 from torchvision.datasets import VisionDataset
 from copy import deepcopy
 from sklearn.model_selection import StratifiedShuffleSplit
@@ -43,9 +42,8 @@ class SLLDatasetsCollection:
         self.val_dataset.transform = test_transform
         self.test_dataset.transform = test_transform
 
-
     @staticmethod
-    def split_train_val(dataset: VisionDataset, val_ratio: float, random_state:int):
+    def split_train_val(dataset: VisionDataset, val_ratio: float, random_state: int):
         labels_attr = None
         if hasattr(dataset, 'labels'):
             labels_attr = 'labels'

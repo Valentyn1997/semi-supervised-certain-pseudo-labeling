@@ -72,7 +72,7 @@ class FixMatch(LightningModule):
         l_targets = composite_batch[0][0][1]
         l_images = composite_batch[0][0][0]
 
-        ul_targets = torch.cat([item[1] for item in composite_batch[1]])  # For later checks
+        # ul_targets = torch.cat([item[1] for item in composite_batch[1]])  # For later checks
         uw_images = torch.cat([item[0][0] for item in composite_batch[1]])
         us_images = torch.cat([item[0][1] for item in composite_batch[1]])
 

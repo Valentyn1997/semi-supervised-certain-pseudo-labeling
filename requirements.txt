@@ -1,3 +1,4 @@
+scikit-learn
 # local package
 -e .
 
