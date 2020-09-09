@@ -13,6 +13,20 @@ Remote connection via ssh:
 
 Than one can access [localhost:5000](http://localhost:5000)
 
+## Running Scripts
+First one needs to make the virtual environment and install all the requirements:
+```console
+python3 -m venv venv
+source venv/bin/activate
+pip3 install -r requirements.txt
+```
+
+Then one can run experiments:
+```console
+PYTHONPATH=. python3 runnables/train_fixmatch.py data.source='CIFAR10' data.n_labelled=250 optimizer.weight_decay=0.0005
+PYTHONPATH=. python3 runnables/train_fixmatch.py data.source='CIFAR100' data.n_labelled=400 optimizer.weight_decay=0.001
+```
+
 
 Project Organization
 ------------
