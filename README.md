@@ -16,7 +16,8 @@ Than one can access [localhost:5000](http://localhost:5000)
 ## Running Scripts
 First one needs to make the virtual environment and install all the requirements:
 ```console
-python3 -m venv venv
+pip install virtualenv
+virtualenv venv
 source venv/bin/activate
 pip3 install -r requirements.txt
 ```
