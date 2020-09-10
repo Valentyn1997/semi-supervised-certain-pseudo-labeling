@@ -48,7 +48,8 @@ class FixMatch(LightningModule):
                    nesterov=self.hparams.optimizer.nesterov, weight_decay=self.hparams.optimizer.weight_decay)
 
     def train_dataloader(self) -> DataLoader:
-        return DataLoader(self.train_dataset, shuffle=True, batch_size=self.hparams.data.batch_size.train, num_workers=2)
+        return DataLoader(self.train_dataset, shuffle=True, batch_size=self.hparams.data.batch_size.train, num_workers=2,
+                          drop_last=self.hparams.exp.drop_last_batch)
 
     def val_dataloader(self) -> DataLoader:
         return DataLoader(self.val_dataset, shuffle=False, batch_size=self.hparams.data.batch_size.val)

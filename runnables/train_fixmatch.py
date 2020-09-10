@@ -62,7 +62,8 @@ def main(args: DictConfig):
                       max_epochs=args.exp.max_epochs,
                       early_stop_callback=early_stop_callback if args.exp.early_stopping else None,
                       checkpoint_callback=checkpoint_callback if args.exp.checkpoint else None,
-                      auto_lr_find=args.optimizer.auto_lr_find)
+                      auto_lr_find=args.optimizer.auto_lr_find,
+                      distributed_backend='dp')
     trainer.fit(model)
     trainer.test(model)
 
