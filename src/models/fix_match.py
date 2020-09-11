@@ -24,10 +24,11 @@ class FixMatch(LightningModule):
         self.artifacts_path = artifacts_path
         self.run_id = run_id
         self.datasets_collection = datasets_collection
-        self.model = WideResNet(depth=28, widen_factor=2, drop_rate=0.0, num_classes=len(datasets_collection.classes))
+        self.hparams = args  # Will be logged to mlflow
+        self.model = WideResNet(depth=28, widen_factor=2, drop_rate=self.hparams.model.drop_rate,
+                                num_classes=len(datasets_collection.classes))
         self.ema_model = WideResNet(depth=28, widen_factor=2, drop_rate=0.0, num_classes=len(datasets_collection.classes))
         self.best_model = self.model  # Placeholder for checkpointing
-        self.hparams = args  # Will be logged to mlflow
         self.ema_optimizer = WeightEMA(self.model, self.ema_model, alpha=self.hparams.model.ema_decay)
         self.logging_df = pd.DataFrame()
 

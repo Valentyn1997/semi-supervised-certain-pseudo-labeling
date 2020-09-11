@@ -4,6 +4,7 @@ model: # Model params
   threshold: 0.95
   lambda_u: 1.0
   ema_decay: 0.999
+  drop_rate: 0.0
 
 # Data params
 data:
