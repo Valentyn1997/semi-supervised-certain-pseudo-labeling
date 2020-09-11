@@ -3,7 +3,7 @@ model: # Model params
   mu: 7  #
   threshold: 0.95
   lambda_u: 1.0
-  ema_decay: 0.9
+  ema_decay: 0.999
 
 # Data params
 data:
@@ -22,6 +22,7 @@ data:
 exp:
   logging: True   # Logging to MlFlow
   log_artifacts: False  # Logging the artifacts, e.g. images
+  log_ul_statistics: image  # Logging the statistics about unlabelled data: batch / image / False
   max_epochs: 10000  # Total number of training epochs to perform.
   early_stopping: False
   early_stopping_patience: 100  #  Number of epochs to wait for early stopping, used if early_stopping is True

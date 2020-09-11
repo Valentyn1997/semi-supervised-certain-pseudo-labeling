@@ -12,6 +12,12 @@ from sklearn.model_selection import StratifiedShuffleSplit
 logger = logging.getLogger(__name__)
 
 
+def getitem_wrapper(getitem):
+    def getitem_with_ind(self, index):
+        return getitem(self, index) + (index, )
+    return getitem_with_ind
+
+
 class SLLDatasetsCollection:
     """Contains the collection of train, val and test datasets"""
     def __init__(self, source: str, n_labelled: int, val_ratio: float, random_state: int,
@@ -20,6 +26,7 @@ class SLLDatasetsCollection:
         self.n_labelled = n_labelled
         mkdir(self.dataset_path) if not exists(self.dataset_path) else None
         self.Dataset = getattr(torchvision.datasets, source)
+        self.Dataset.__getitem__ = getitem_wrapper(self.Dataset.__getitem__)
 
         if source in ['CIFAR10', 'CIFAR100']:
             self.train_dataset = self.Dataset(root=self.dataset_path, train=True, download=True)
