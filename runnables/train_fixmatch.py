@@ -47,7 +47,7 @@ def main(args: DictConfig):
                                                 train_l_transform=train_l_transform,
                                                 train_ul_transform=train_ul_transform,
                                                 test_transform=basic_transform)
-    model = FixMatch(args, datasets_collection, artifacts_path=artifacts_path if args.exp.log_artifacts else None)
+    model = FixMatch(args, datasets_collection, artifacts_path=artifacts_path, run_id=run_id)
 
     # Early stopping & Checkpointing
     early_stop_callback = EarlyStopping(monitor='val_loss', min_delta=0.00, patience=args.exp.early_stopping_patience,
@@ -62,7 +62,9 @@ def main(args: DictConfig):
                       max_epochs=args.exp.max_epochs,
                       early_stop_callback=early_stop_callback if args.exp.early_stopping else None,
                       checkpoint_callback=checkpoint_callback if args.exp.checkpoint else None,
-                      auto_lr_find=args.optimizer.auto_lr_find)
+                      auto_lr_find=args.optimizer.auto_lr_find,
+                      distributed_backend='dp',
+                      row_log_interval=1)
     trainer.fit(model)
     trainer.test(model)
 

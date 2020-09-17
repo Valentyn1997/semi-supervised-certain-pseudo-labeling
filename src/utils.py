@@ -32,5 +32,6 @@ class CustomModelCheckpoint(ModelCheckpoint):
                                                   step=self.model.trainer.global_step)
 
 
-def simple_accuracy(preds, labels):
+def simple_accuracy(logits, labels):
+    preds = np.argmax(logits, axis=1)
     return (preds == labels).mean()

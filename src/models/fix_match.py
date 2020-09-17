@@ -7,6 +7,8 @@ from torch.optim import SGD
 from torch.utils.data import DataLoader
 import numpy as np
 from copy import deepcopy
+import pandas as pd
+from pytorch_lightning.core.step_result import TrainResult
 
 from src.utils import simple_accuracy
 from src.models.utils import WeightEMA
@@ -15,16 +17,20 @@ from src.data.ssl_datasets import SLLDatasetsCollection, FixMatchCompositeTrainD
 
 
 class FixMatch(LightningModule):
-    def __init__(self, args: DictConfig, datasets_collection: SLLDatasetsCollection, artifacts_path: str = None):
+    def __init__(self, args: DictConfig, datasets_collection: SLLDatasetsCollection, artifacts_path: str = None,
+                 run_id: str = None):
         super().__init__()
         self.lr = None  # Placeholder for auto_lr_find
         self.artifacts_path = artifacts_path
+        self.run_id = run_id
         self.datasets_collection = datasets_collection
-        self.model = WideResNet(depth=28, widen_factor=2, drop_rate=0.0, num_classes=len(datasets_collection.classes))
+        self.hparams = args  # Will be logged to mlflow
+        self.model = WideResNet(depth=28, widen_factor=2, drop_rate=self.hparams.model.drop_rate,
+                                num_classes=len(datasets_collection.classes))
         self.ema_model = WideResNet(depth=28, widen_factor=2, drop_rate=0.0, num_classes=len(datasets_collection.classes))
         self.best_model = self.model  # Placeholder for checkpointing
-        self.hparams = args  # Will be logged to mlflow
         self.ema_optimizer = WeightEMA(self.model, self.ema_model, alpha=self.hparams.model.ema_decay)
+        self.logging_df = pd.DataFrame()
 
     def prepare_data(self):
         self.train_dataset = FixMatchCompositeTrainDataset(self.datasets_collection.train_l_dataset,
@@ -48,7 +54,8 @@ class FixMatch(LightningModule):
                    nesterov=self.hparams.optimizer.nesterov, weight_decay=self.hparams.optimizer.weight_decay)
 
     def train_dataloader(self) -> DataLoader:
-        return DataLoader(self.train_dataset, shuffle=True, batch_size=self.hparams.data.batch_size.train, num_workers=2)
+        return DataLoader(self.train_dataset, shuffle=True, batch_size=self.hparams.data.batch_size.train, num_workers=2,
+                          drop_last=self.hparams.exp.drop_last_batch)
 
     def val_dataloader(self) -> DataLoader:
         return DataLoader(self.val_dataset, shuffle=False, batch_size=self.hparams.data.batch_size.val)
@@ -72,7 +79,8 @@ class FixMatch(LightningModule):
         l_targets = composite_batch[0][0][1]
         l_images = composite_batch[0][0][0]
 
-        # ul_targets = torch.cat([item[1] for item in composite_batch[1]])  # For later checks
+        ul_targets = torch.cat([item[1] for item in composite_batch[1]])  # For later checks
+        ul_ids = torch.cat([item[2] for item in composite_batch[1]])
         uw_images = torch.cat([item[0][0] for item in composite_batch[1]])
         us_images = torch.cat([item[0][1] for item in composite_batch[1]])
 
@@ -92,34 +100,60 @@ class FixMatch(LightningModule):
         # Train loss / labelled accuracy
         loss = loss_l + self.hparams.model.lambda_u * loss_ul
 
-        return {'loss': loss, 'loss_l': loss_l, 'loss_ul': loss_ul}
+        result = TrainResult(minimize=loss)
+        result.log('train_loss', loss, on_epoch=True, on_step=False, sync_dist=True)
+        result.log('train_loss_l', loss_l, on_epoch=True, on_step=False, sync_dist=True)
+        result.log('train_loss_ul', loss_ul, on_epoch=True, on_step=False, sync_dist=True)
+
+        # Unlabelled statistics
+        if self.hparams.exp.log_ul_statistics == 'batch':
+            certain_logits_uw = logits_uw[mask == 1.0].cpu().numpy()
+            certain_ul_targets = ul_targets[mask == 1.0].cpu().numpy()
+            all_logits_uw = logits_uw.cpu().numpy()
+            all_ul_targets = ul_targets.cpu().numpy()
+
+            certain_ul_acc = simple_accuracy(certain_logits_uw, certain_ul_targets)
+            certain_ul_acc = torch.tensor(0.0) if np.isnan(certain_ul_acc) else torch.tensor(certain_ul_acc)
+
+            all_ul_acc = simple_accuracy(all_logits_uw, all_ul_targets)
+            all_ul_acc = torch.tensor(all_ul_acc)
+
+            result.log('certain_ul_acc', certain_ul_acc, on_epoch=False, on_step=True, sync_dist=True)
+            result.log('all_ul_acc', all_ul_acc, on_epoch=False, on_step=True, sync_dist=True)
+            result.log('max_probs', max_probs.mean(), on_epoch=False, on_step=True, sync_dist=True)
+            result.log('n_certain', mask.sum(), on_epoch=False, on_step=True, sync_dist=True)
+
+        elif self.hparams.exp.log_ul_statistics == 'image':
+            batch_df = pd.DataFrame(index=range(len(ul_ids)))
+            batch_df['image_id'] = ul_ids.tolist()
+            batch_df['score'] = max_probs.tolist()
+            batch_df['correctness'] = (targets_u == ul_targets).tolist()
+            # batch_df['experiment_id'] = self.run_id
+            batch_df['epoch'] = self.trainer.current_epoch + 1
+            # batch_df['score_type'] = 'softmax_output'
+            self.logging_df = self.logging_df.append(batch_df, ignore_index=True)
+
+        return result
 
     def validation_step(self, batch, batch_idx):
         results = {}
-        images, targets = batch
+        images, targets, ids = batch
         logits = self(images, model='ema')
         loss = F.cross_entropy(logits, targets, reduction='mean')
         results['loss'] = loss.detach()
-        results['preds'] = logits.detach()
-        results['labels'] = targets.detach()
+        results['logits'] = logits.detach()
+        results['targets'] = targets.detach()
         return results
 
     def test_step(self, batch, batch_idx):
         results = {}
-        images, targets = batch
+        images, targets, ids = batch
         logits = self(images, model='best')
         loss = F.cross_entropy(logits, targets, reduction='mean')
         results['loss'] = loss.detach()
-        results['preds'] = logits.detach()
-        results['labels'] = targets.detach()
+        results['logits'] = logits.detach()
+        results['targets'] = targets.detach()
         return results
-
-    def training_epoch_end(self, outputs):
-        loss = np.array([x['loss'].mean().item() for x in outputs]).mean()
-        loss_l = np.array([x['loss_l'].mean().item() for x in outputs]).mean()
-        loss_ul = np.array([x['loss_ul'].mean().item() for x in outputs]).mean()
-        mlflow_metrics = {'train_loss': loss, 'train_loss_l': loss_l, 'train_loss_ul': loss_ul}
-        return {'loss': loss, 'log': mlflow_metrics}
 
     def validation_epoch_end(self, outputs):
         loss_val_mean = torch.tensor(np.array([x['loss'].cpu().numpy() for x in outputs]).mean())
@@ -133,15 +167,21 @@ class FixMatch(LightningModule):
 
     @staticmethod
     def calculate_metrics(outputs, prefix):
-        preds = np.array([prob for x in outputs for prob in x['preds'].cpu().numpy()])
-        preds = np.argmax(preds, axis=1)
-        labels = np.array([label for x in outputs for label in x['labels'].cpu().numpy()])
+        logits = np.array([prob for x in outputs for prob in x['logits'].cpu().numpy()])
+        targets = np.array([label for x in outputs for label in x['targets'].cpu().numpy()])
         return {
-            prefix + '_acc': simple_accuracy(preds, labels)
+            prefix + '_acc': simple_accuracy(logits, targets)
         }
 
+    def on_epoch_end(self) -> None:
+        if self.hparams.exp.log_ul_statistics == 'image' and (self.trainer.current_epoch + 1) % 100 == 0:
+            epochs_range = self.logging_df.epoch.min(), self.logging_df.epoch.max()
+            csv_path = f'{self.artifacts_path}/epochs_{epochs_range[0]}_{epochs_range[1]}.csv'
+            self.logging_df.to_csv(csv_path, index=False)
+            self.logging_df = pd.DataFrame()
+
     def on_train_start(self) -> None:
-        if self.artifacts_path is not None:  # Plotting one batch
+        if self.hparams.exp.log_artifacts:  # Plotting one batch of images
             composite_batch = next(iter(self.train_dataloader()))
 
             l_images = composite_batch[0][0][0]
