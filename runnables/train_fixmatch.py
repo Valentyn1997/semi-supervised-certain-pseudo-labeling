@@ -7,7 +7,7 @@ from pytorch_lightning import Trainer
 from pytorch_lightning.loggers import MLFlowLogger
 from pytorch_lightning.callbacks.early_stopping import EarlyStopping
 
-from src import MLFLOW_URI, CONFIG_PATH, ROOT_PATH
+from src import CONFIG_PATH, ROOT_PATH
 from src.utils import set_seed, CustomModelCheckpoint
 from src.models.fix_match import FixMatch
 from src.data.ssl_datasets import SLLDatasetsCollection
@@ -25,7 +25,7 @@ def main(args: DictConfig):
     # MlFlow Logging
     if args.exp.logging:
         experiment_name = f'FixMatch/{dataset_name}'
-        mlf_logger = MLFlowLogger(experiment_name=experiment_name, tracking_uri=MLFLOW_URI)
+        mlf_logger = MLFlowLogger(experiment_name=experiment_name, tracking_uri=args.exp.mlflow_uri)
 
         run_id = mlf_logger.run_id
         experiment_id = mlf_logger.experiment.get_experiment_by_name(experiment_name).experiment_id
