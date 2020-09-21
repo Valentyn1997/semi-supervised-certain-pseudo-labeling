@@ -1,3 +1,5 @@
+import importlib
+
 import torchvision.utils as vutils
 from pytorch_lightning import LightningModule
 from omegaconf import DictConfig
@@ -8,6 +10,7 @@ from torch.utils.data import DataLoader
 import numpy as np
 from copy import deepcopy
 
+from src.models.certainty_strategy import AbstractStrategy
 from src.utils import simple_accuracy
 from src.models.utils import WeightEMA
 from src.models.backbones import WideResNet
@@ -25,6 +28,12 @@ class FixMatch(LightningModule):
         self.best_model = self.model  # Placeholder for checkpointing
         self.hparams = args  # Will be logged to mlflow
         self.ema_optimizer = WeightEMA(self.model, self.ema_model, alpha=self.hparams.model.ema_decay)
+
+        strategy_class_name = self.hparams.model.certainty_strategy
+        module = importlib.import_module("src.models.certainty_strategy")
+        strategy = getattr(module, strategy_class_name)()
+        assert isinstance(strategy, AbstractStrategy)
+        self.strategy = strategy
 
     def prepare_data(self):
         self.train_dataset = FixMatchCompositeTrainDataset(self.datasets_collection.train_l_dataset,
@@ -83,15 +92,20 @@ class FixMatch(LightningModule):
         # Unsupervised loss
         logits_us = self(us_images)
         with torch.no_grad():
-            logits_uw = self(uw_images)
-            pseudo_label = torch.softmax(logits_uw.detach(), dim=-1)
-        max_probs, targets_u = torch.max(pseudo_label, dim=-1)
+            if self.strategy.is_ensemble():
+                output = torch.stack([self(uw_images) for _ in range(self.hparams.model.T)]).detach()
+            else:
+                output = self(uw_images).detach()
+
+        # get the value of the max, and the index (between 1 and 10 for CIFAR10 for example)
+        logits = torch.softmax(output, dim=-1)
+        max_probs, targets_u = self.strategy.get_certainty_and_label(logits_t_n_c=logits)
+
         mask = max_probs.ge(self.hparams.model.threshold).float()
         loss_ul = (F.cross_entropy(logits_us, targets_u, reduction='none') * mask).mean()
 
         # Train loss / labelled accuracy
         loss = loss_l + self.hparams.model.lambda_u * loss_ul
-
         return {'loss': loss, 'loss_l': loss_l, 'loss_ul': loss_ul}
 
     def validation_step(self, batch, batch_idx):

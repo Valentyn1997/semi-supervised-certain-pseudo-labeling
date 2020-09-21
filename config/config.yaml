@@ -4,6 +4,8 @@ model: # Model params
   threshold: 0.95
   lambda_u: 1.0
   ema_decay: 0.9
+  T: 100
+  certainty_strategy: "SoftMax" #  SoftMax / MeanSoftmax / PECertainty / BALDCertainty / Margin / Entropy
 
 # Data params
 data:
