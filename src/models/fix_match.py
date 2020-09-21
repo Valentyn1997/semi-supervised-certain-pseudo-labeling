@@ -6,7 +6,6 @@ import torch.nn.functional as F
 from torch.optim import SGD
 from torch.utils.data import DataLoader
 import numpy as np
-from copy import deepcopy
 import pandas as pd
 from pytorch_lightning.core.step_result import TrainResult
 
@@ -174,7 +173,6 @@ class FixMatch(LightningModule):
         }
 
     def on_epoch_end(self) -> None:
-        print(f'\n Len:  {len(self.batch_dfs)}')
         for batch_df in self.batch_dfs:
             self.logging_df = self.logging_df.append(batch_df, ignore_index=True)
         self.batch_dfs = []
