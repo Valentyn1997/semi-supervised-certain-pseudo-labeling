@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --output=./train.log  # send stdout to outfile
+#SBATCH --output=./train1.log  # send stdout to outfile
 #SBATCH -p debug
 #SBATCH --gres=gpu:2
 

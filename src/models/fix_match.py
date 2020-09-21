@@ -31,6 +31,8 @@ class FixMatch(LightningModule):
         self.best_model = self.model  # Placeholder for checkpointing
         self.ema_optimizer = WeightEMA(self.model, self.ema_model, alpha=self.hparams.model.ema_decay)
         self.logging_df = pd.DataFrame()
+        self.logging_frequency = 500
+        self.batch_dfs = []
 
     def prepare_data(self):
         self.train_dataset = FixMatchCompositeTrainDataset(self.datasets_collection.train_l_dataset,
@@ -130,9 +132,7 @@ class FixMatch(LightningModule):
             batch_df['correctness'] = (targets_u == ul_targets).tolist()
             # batch_df['experiment_id'] = self.run_id
             batch_df['epoch'] = self.trainer.current_epoch + 1
-            # batch_df['score_type'] = 'softmax_output'
-            self.logging_df = self.logging_df.append(batch_df, ignore_index=True)
-
+            self.batch_dfs.append(batch_df)
         return result
 
     def validation_step(self, batch, batch_idx):
@@ -174,9 +174,14 @@ class FixMatch(LightningModule):
         }
 
     def on_epoch_end(self) -> None:
-        if self.hparams.exp.log_ul_statistics == 'image' and (self.trainer.current_epoch + 1) % 100 == 0:
-            epochs_range = self.logging_df.epoch.min(), self.logging_df.epoch.max()
-            csv_path = f'{self.artifacts_path}/epochs_{epochs_range[0]}_{epochs_range[1]}.csv'
+        print(f'\n Len:  {len(self.batch_dfs)}')
+        for batch_df in self.batch_dfs:
+            self.logging_df = self.logging_df.append(batch_df, ignore_index=True)
+        self.batch_dfs = []
+
+        if self.hparams.exp.log_ul_statistics == 'image' and (self.trainer.current_epoch + 1) % self.logging_frequency == 0:
+            epochs_range = self.logging_df['epoch'].min(), self.logging_df['epoch'].max()
+            csv_path = f'{self.artifacts_path}/epochs_{epochs_range[0]:05d}_{epochs_range[1]:05d}.csv'
             self.logging_df.to_csv(csv_path, index=False)
             self.logging_df = pd.DataFrame()
 
