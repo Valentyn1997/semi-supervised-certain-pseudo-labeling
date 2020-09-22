@@ -1,3 +1,5 @@
+import importlib
+
 import torchvision.utils as vutils
 from pytorch_lightning import LightningModule
 from omegaconf import DictConfig
@@ -9,6 +11,7 @@ import numpy as np
 import pandas as pd
 from pytorch_lightning.core.step_result import TrainResult
 
+from src.models.certainty_strategy import AbstractStrategy
 from src.utils import simple_accuracy
 from src.models.utils import WeightEMA, UnlabelledStatisticsLogger
 from src.models.backbones import WideResNet
@@ -31,6 +34,12 @@ class FixMatch(LightningModule):
         self.ema_optimizer = WeightEMA(self.model, self.ema_model, alpha=self.hparams.model.ema_decay)
         self.ul_logger = UnlabelledStatisticsLogger(level=self.hparams.exp.log_ul_statistics, save_frequency=500,
                                                     artifacts_path=self.artifacts_path)
+
+        strategy_class_name = self.hparams.model.certainty_strategy
+        module = importlib.import_module("src.models.certainty_strategy")
+        strategy = getattr(module, strategy_class_name)()
+        assert isinstance(strategy, AbstractStrategy)
+        self.strategy = strategy
 
     def prepare_data(self):
         self.train_dataset = FixMatchCompositeTrainDataset(self.datasets_collection.train_l_dataset,
@@ -91,9 +100,14 @@ class FixMatch(LightningModule):
         # Unsupervised loss
         us_logits = self(us_images)
         with torch.no_grad():
-            uw_logits = self(uw_images)
-            uw_pseudo_probs = torch.softmax(uw_logits.detach(), dim=-1)
-        max_probs, u_pseudo_targets = torch.max(uw_pseudo_probs, dim=-1)
+            if self.strategy.is_ensemble():
+                uw_logits = torch.stack([self(uw_images) for _ in range(self.hparams.model.T)]).detach()
+            else:
+                uw_logits = self(uw_images).detach()
+
+        # get the value of the max, and the index (between 1 and 10 for CIFAR10 for example)
+        uw_pseudo_probs = torch.softmax(uw_logits, dim=-1)
+        max_probs, u_pseudo_targets = self.strategy.get_certainty_and_label(logits_t_n_c=uw_pseudo_probs)
         mask = max_probs.ge(self.hparams.model.threshold).float()
         u_loss = (F.cross_entropy(us_logits, u_pseudo_targets, reduction='none') * mask).mean()
 
