@@ -35,6 +35,7 @@ class FixMatch(LightningModule):
         self.ul_logger = UnlabelledStatisticsLogger(level=self.hparams.exp.log_ul_statistics, save_frequency=500,
                                                     artifacts_path=self.artifacts_path)
 
+        # Initialisation of certainty strategy
         strategy_class_name = self.hparams.model.certainty_strategy
         module = importlib.import_module("src.models.certainty_strategy")
         strategy = getattr(module, strategy_class_name)()
@@ -100,15 +101,15 @@ class FixMatch(LightningModule):
         # Unsupervised loss
         us_logits = self(us_images)
         with torch.no_grad():
-            if self.strategy.is_ensemble():
+            if self.strategy.is_ensemble:
                 uw_logits = torch.stack([self(uw_images) for _ in range(self.hparams.model.T)]).detach()
             else:
                 uw_logits = self(uw_images).detach()
 
         # get the value of the max, and the index (between 1 and 10 for CIFAR10 for example)
-        uw_pseudo_probs = torch.softmax(uw_logits, dim=-1)
-        max_probs, u_pseudo_targets = self.strategy.get_certainty_and_label(logits_t_n_c=uw_pseudo_probs)
-        mask = max_probs.ge(self.hparams.model.threshold).float()
+        uw_pseudo_soft_targets = torch.softmax(uw_logits, dim=-1)
+        u_scores, u_pseudo_targets = self.strategy.get_certainty_and_label(softmax_outputs=uw_pseudo_soft_targets)
+        mask = u_scores.ge(self.hparams.model.threshold).float()
         u_loss = (F.cross_entropy(us_logits, u_pseudo_targets, reduction='none') * mask).mean()
 
         # Train loss / labelled accuracy
@@ -120,7 +121,7 @@ class FixMatch(LightningModule):
         result.log('train_loss_ul', u_loss, on_epoch=True, on_step=False, sync_dist=True)
 
         # Unlabelled statistics
-        self.ul_logger.log_statistics(result, mask, max_probs, uw_logits, u_targets, u_pseudo_targets, u_ids,
+        self.ul_logger.log_statistics(result, mask, u_scores, uw_logits, u_targets, u_pseudo_targets, u_ids,
                                       current_epoch=self.trainer.current_epoch + 1)
 
         return result

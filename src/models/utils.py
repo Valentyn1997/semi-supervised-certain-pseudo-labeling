@@ -35,7 +35,7 @@ class UnlabelledStatisticsLogger:
 
     def log_statistics(self, result: TrainResult,
                        thresholding_mask: torch.tensor,
-                       thresholding_score: torch.tensor,
+                       u_scores: torch.tensor,
                        uw_logits: torch.tensor,
                        u_targets: torch.tensor,
                        u_pseudo_targets: torch.tensor,
@@ -55,13 +55,13 @@ class UnlabelledStatisticsLogger:
 
             result.log('certain_ul_acc', certain_ul_acc, on_epoch=False, on_step=True, sync_dist=True)
             result.log('all_ul_acc', all_ul_acc, on_epoch=False, on_step=True, sync_dist=True)
-            result.log('max_probs', thresholding_score.mean(), on_epoch=False, on_step=True, sync_dist=True)
+            result.log('max_probs', u_scores.mean(), on_epoch=False, on_step=True, sync_dist=True)
             result.log('n_certain', thresholding_mask.sum(), on_epoch=False, on_step=True, sync_dist=True)
 
         elif self.level == 'image':
             batch_df = pd.DataFrame(index=range(len(u_ids)))
             batch_df['image_id'] = u_ids.tolist()
-            batch_df['score'] = thresholding_score.tolist()
+            batch_df['score'] = u_scores.tolist()
             batch_df['correctness'] = (u_pseudo_targets == u_targets).tolist()
             batch_df['epoch'] = current_epoch
             self.batch_dfs.append(batch_df)

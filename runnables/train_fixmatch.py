@@ -24,7 +24,7 @@ def main(args: DictConfig):
 
     # MlFlow Logging
     if args.exp.logging:
-        experiment_name = f'FixMatch/{dataset_name}'
+        experiment_name = f'FixMatch/{dataset_name}/{args.model.certainty_strategy}'
         mlf_logger = MLFlowLogger(experiment_name=experiment_name, tracking_uri=args.exp.mlflow_uri)
 
         run_id = mlf_logger.run_id
