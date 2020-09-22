@@ -10,7 +10,7 @@ import pandas as pd
 from pytorch_lightning.core.step_result import TrainResult
 
 from src.utils import simple_accuracy
-from src.models.utils import WeightEMA
+from src.models.utils import WeightEMA, UnlabelledStatisticsLogger
 from src.models.backbones import WideResNet
 from src.data.ssl_datasets import SLLDatasetsCollection, FixMatchCompositeTrainDataset
 
@@ -29,9 +29,8 @@ class FixMatch(LightningModule):
         self.ema_model = WideResNet(depth=28, widen_factor=2, drop_rate=0.0, num_classes=len(datasets_collection.classes))
         self.best_model = self.model  # Placeholder for checkpointing
         self.ema_optimizer = WeightEMA(self.model, self.ema_model, alpha=self.hparams.model.ema_decay)
-        self.logging_df = pd.DataFrame()
-        self.logging_frequency = 500
-        self.batch_dfs = []
+        self.ul_logger = UnlabelledStatisticsLogger(level=self.hparams.exp.log_ul_statistics, save_frequency=500,
+                                                    artifacts_path=self.artifacts_path)
 
     def prepare_data(self):
         self.train_dataset = FixMatchCompositeTrainDataset(self.datasets_collection.train_l_dataset,
@@ -80,58 +79,36 @@ class FixMatch(LightningModule):
         l_targets = composite_batch[0][0][1]
         l_images = composite_batch[0][0][0]
 
-        ul_targets = torch.cat([item[1] for item in composite_batch[1]])  # For later checks
-        ul_ids = torch.cat([item[2] for item in composite_batch[1]])
+        u_targets = torch.cat([item[1] for item in composite_batch[1]])  # For later checks
+        u_ids = torch.cat([item[2] for item in composite_batch[1]])
         uw_images = torch.cat([item[0][0] for item in composite_batch[1]])
         us_images = torch.cat([item[0][1] for item in composite_batch[1]])
 
         # Supervised loss
-        logits_l = self(l_images)
-        loss_l = F.cross_entropy(logits_l, l_targets, reduction='mean')
+        l_logits = self(l_images)
+        l_loss = F.cross_entropy(l_logits, l_targets, reduction='mean')
 
         # Unsupervised loss
-        logits_us = self(us_images)
+        us_logits = self(us_images)
         with torch.no_grad():
-            logits_uw = self(uw_images)
-            pseudo_label = torch.softmax(logits_uw.detach(), dim=-1)
-        max_probs, targets_u = torch.max(pseudo_label, dim=-1)
+            uw_logits = self(uw_images)
+            uw_pseudo_probs = torch.softmax(uw_logits.detach(), dim=-1)
+        max_probs, u_pseudo_targets = torch.max(uw_pseudo_probs, dim=-1)
         mask = max_probs.ge(self.hparams.model.threshold).float()
-        loss_ul = (F.cross_entropy(logits_us, targets_u, reduction='none') * mask).mean()
+        u_loss = (F.cross_entropy(us_logits, u_pseudo_targets, reduction='none') * mask).mean()
 
         # Train loss / labelled accuracy
-        loss = loss_l + self.hparams.model.lambda_u * loss_ul
+        loss = l_loss + self.hparams.model.lambda_u * u_loss
 
         result = TrainResult(minimize=loss)
         result.log('train_loss', loss, on_epoch=True, on_step=False, sync_dist=True)
-        result.log('train_loss_l', loss_l, on_epoch=True, on_step=False, sync_dist=True)
-        result.log('train_loss_ul', loss_ul, on_epoch=True, on_step=False, sync_dist=True)
+        result.log('train_loss_l', l_loss, on_epoch=True, on_step=False, sync_dist=True)
+        result.log('train_loss_ul', u_loss, on_epoch=True, on_step=False, sync_dist=True)
 
         # Unlabelled statistics
-        if self.hparams.exp.log_ul_statistics == 'batch':
-            certain_logits_uw = logits_uw[mask == 1.0].cpu().numpy()
-            certain_ul_targets = ul_targets[mask == 1.0].cpu().numpy()
-            all_logits_uw = logits_uw.cpu().numpy()
-            all_ul_targets = ul_targets.cpu().numpy()
+        self.ul_logger.log_statistics(result, mask, max_probs, uw_logits, u_targets, u_pseudo_targets, u_ids,
+                                      current_epoch=self.trainer.current_epoch + 1)
 
-            certain_ul_acc = simple_accuracy(certain_logits_uw, certain_ul_targets)
-            certain_ul_acc = torch.tensor(0.0) if np.isnan(certain_ul_acc) else torch.tensor(certain_ul_acc)
-
-            all_ul_acc = simple_accuracy(all_logits_uw, all_ul_targets)
-            all_ul_acc = torch.tensor(all_ul_acc)
-
-            result.log('certain_ul_acc', certain_ul_acc, on_epoch=False, on_step=True, sync_dist=True)
-            result.log('all_ul_acc', all_ul_acc, on_epoch=False, on_step=True, sync_dist=True)
-            result.log('max_probs', max_probs.mean(), on_epoch=False, on_step=True, sync_dist=True)
-            result.log('n_certain', mask.sum(), on_epoch=False, on_step=True, sync_dist=True)
-
-        elif self.hparams.exp.log_ul_statistics == 'image':
-            batch_df = pd.DataFrame(index=range(len(ul_ids)))
-            batch_df['image_id'] = ul_ids.tolist()
-            batch_df['score'] = max_probs.tolist()
-            batch_df['correctness'] = (targets_u == ul_targets).tolist()
-            # batch_df['experiment_id'] = self.run_id
-            batch_df['epoch'] = self.trainer.current_epoch + 1
-            self.batch_dfs.append(batch_df)
         return result
 
     def validation_step(self, batch, batch_idx):
@@ -173,15 +150,7 @@ class FixMatch(LightningModule):
         }
 
     def on_epoch_end(self) -> None:
-        for batch_df in self.batch_dfs:
-            self.logging_df = self.logging_df.append(batch_df, ignore_index=True)
-        self.batch_dfs = []
-
-        if self.hparams.exp.log_ul_statistics == 'image' and (self.trainer.current_epoch + 1) % self.logging_frequency == 0:
-            epochs_range = self.logging_df['epoch'].min(), self.logging_df['epoch'].max()
-            csv_path = f'{self.artifacts_path}/epochs_{epochs_range[0]:05d}_{epochs_range[1]:05d}.csv'
-            self.logging_df.to_csv(csv_path, index=False)
-            self.logging_df = pd.DataFrame()
+        self.ul_logger.on_epoch_end(current_epoch=self.trainer.current_epoch + 1)
 
     def on_train_start(self) -> None:
         if self.hparams.exp.log_artifacts:  # Plotting one batch of images
