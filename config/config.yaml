@@ -3,7 +3,7 @@ model: # Model params
   mu: 7  #
   threshold: 0.95
   lambda_u: 1.0
-  ema_decay: 0.999
+  ema_decay: 0.9
   drop_rate: 0.0
 
 # Data params
@@ -12,7 +12,7 @@ data:
   n_labelled: ???    # Number of labelled images to use from train, all the other images become unlabelled
   val_ratio: 0.1  # The size of the validation set based on the train-set
   batch_size:  # Batch size per GPU/CPU for training
-    train: 32
+    train: 64
     val: 64
     test: 64
   weak_aug:
@@ -22,6 +22,7 @@ data:
 # Experiment
 exp:
   logging: True   # Logging to MlFlow
+  mlflow_uri: http://127.0.0.1:5000
   log_artifacts: False  # Logging the artifacts, e.g. images
   log_ul_statistics: image  # Logging the statistics about unlabelled data: batch / image / False
   max_epochs: 10000  # Total number of training epochs to perform.
