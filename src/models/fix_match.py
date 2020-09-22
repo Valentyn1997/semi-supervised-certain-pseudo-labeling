@@ -8,26 +8,32 @@ import torch.nn.functional as F
 from torch.optim import SGD
 from torch.utils.data import DataLoader
 import numpy as np
-from copy import deepcopy
+import pandas as pd
+from pytorch_lightning.core.step_result import TrainResult
 
 from src.models.certainty_strategy import AbstractStrategy
 from src.utils import simple_accuracy
-from src.models.utils import WeightEMA
+from src.models.utils import WeightEMA, UnlabelledStatisticsLogger
 from src.models.backbones import WideResNet
 from src.data.ssl_datasets import SLLDatasetsCollection, FixMatchCompositeTrainDataset
 
 
 class FixMatch(LightningModule):
-    def __init__(self, args: DictConfig, datasets_collection: SLLDatasetsCollection, artifacts_path: str = None):
+    def __init__(self, args: DictConfig, datasets_collection: SLLDatasetsCollection, artifacts_path: str = None,
+                 run_id: str = None):
         super().__init__()
         self.lr = None  # Placeholder for auto_lr_find
         self.artifacts_path = artifacts_path
+        self.run_id = run_id
         self.datasets_collection = datasets_collection
-        self.model = WideResNet(depth=28, widen_factor=2, drop_rate=0.0, num_classes=len(datasets_collection.classes))
+        self.hparams = args  # Will be logged to mlflow
+        self.model = WideResNet(depth=28, widen_factor=2, drop_rate=self.hparams.model.drop_rate,
+                                num_classes=len(datasets_collection.classes))
         self.ema_model = WideResNet(depth=28, widen_factor=2, drop_rate=0.0, num_classes=len(datasets_collection.classes))
         self.best_model = self.model  # Placeholder for checkpointing
-        self.hparams = args  # Will be logged to mlflow
         self.ema_optimizer = WeightEMA(self.model, self.ema_model, alpha=self.hparams.model.ema_decay)
+        self.ul_logger = UnlabelledStatisticsLogger(level=self.hparams.exp.log_ul_statistics, save_frequency=500,
+                                                    artifacts_path=self.artifacts_path)
 
         strategy_class_name = self.hparams.model.certainty_strategy
         module = importlib.import_module("src.models.certainty_strategy")
@@ -57,7 +63,8 @@ class FixMatch(LightningModule):
                    nesterov=self.hparams.optimizer.nesterov, weight_decay=self.hparams.optimizer.weight_decay)
 
     def train_dataloader(self) -> DataLoader:
-        return DataLoader(self.train_dataset, shuffle=True, batch_size=self.hparams.data.batch_size.train, num_workers=2)
+        return DataLoader(self.train_dataset, shuffle=True, batch_size=self.hparams.data.batch_size.train, num_workers=2,
+                          drop_last=self.hparams.exp.drop_last_batch)
 
     def val_dataloader(self) -> DataLoader:
         return DataLoader(self.val_dataset, shuffle=False, batch_size=self.hparams.data.batch_size.val)
@@ -81,59 +88,62 @@ class FixMatch(LightningModule):
         l_targets = composite_batch[0][0][1]
         l_images = composite_batch[0][0][0]
 
-        # ul_targets = torch.cat([item[1] for item in composite_batch[1]])  # For later checks
+        u_targets = torch.cat([item[1] for item in composite_batch[1]])  # For later checks
+        u_ids = torch.cat([item[2] for item in composite_batch[1]])
         uw_images = torch.cat([item[0][0] for item in composite_batch[1]])
         us_images = torch.cat([item[0][1] for item in composite_batch[1]])
 
         # Supervised loss
-        logits_l = self(l_images)
-        loss_l = F.cross_entropy(logits_l, l_targets, reduction='mean')
+        l_logits = self(l_images)
+        l_loss = F.cross_entropy(l_logits, l_targets, reduction='mean')
 
         # Unsupervised loss
-        logits_us = self(us_images)
+        us_logits = self(us_images)
         with torch.no_grad():
             if self.strategy.is_ensemble():
-                output = torch.stack([self(uw_images) for _ in range(self.hparams.model.T)]).detach()
+                uw_logits = torch.stack([self(uw_images) for _ in range(self.hparams.model.T)]).detach()
             else:
-                output = self(uw_images).detach()
+                uw_logits = self(uw_images).detach()
 
         # get the value of the max, and the index (between 1 and 10 for CIFAR10 for example)
-        logits = torch.softmax(output, dim=-1)
-        max_probs, targets_u = self.strategy.get_certainty_and_label(logits_t_n_c=logits)
-
+        uw_pseudo_probs = torch.softmax(uw_logits, dim=-1)
+        max_probs, u_pseudo_targets = self.strategy.get_certainty_and_label(logits_t_n_c=uw_pseudo_probs)
         mask = max_probs.ge(self.hparams.model.threshold).float()
-        loss_ul = (F.cross_entropy(logits_us, targets_u, reduction='none') * mask).mean()
+        u_loss = (F.cross_entropy(us_logits, u_pseudo_targets, reduction='none') * mask).mean()
 
         # Train loss / labelled accuracy
-        loss = loss_l + self.hparams.model.lambda_u * loss_ul
-        return {'loss': loss, 'loss_l': loss_l, 'loss_ul': loss_ul}
+        loss = l_loss + self.hparams.model.lambda_u * u_loss
+
+        result = TrainResult(minimize=loss)
+        result.log('train_loss', loss, on_epoch=True, on_step=False, sync_dist=True)
+        result.log('train_loss_l', l_loss, on_epoch=True, on_step=False, sync_dist=True)
+        result.log('train_loss_ul', u_loss, on_epoch=True, on_step=False, sync_dist=True)
+
+        # Unlabelled statistics
+        self.ul_logger.log_statistics(result, mask, max_probs, uw_logits, u_targets, u_pseudo_targets, u_ids,
+                                      current_epoch=self.trainer.current_epoch + 1)
+
+        return result
 
     def validation_step(self, batch, batch_idx):
         results = {}
-        images, targets = batch
+        images, targets, ids = batch
         logits = self(images, model='ema')
         loss = F.cross_entropy(logits, targets, reduction='mean')
         results['loss'] = loss.detach()
-        results['preds'] = logits.detach()
-        results['labels'] = targets.detach()
+        results['logits'] = logits.detach()
+        results['targets'] = targets.detach()
         return results
 
     def test_step(self, batch, batch_idx):
         results = {}
-        images, targets = batch
+        images, targets, ids = batch
         logits = self(images, model='best')
         loss = F.cross_entropy(logits, targets, reduction='mean')
         results['loss'] = loss.detach()
-        results['preds'] = logits.detach()
-        results['labels'] = targets.detach()
+        results['logits'] = logits.detach()
+        results['targets'] = targets.detach()
         return results
-
-    def training_epoch_end(self, outputs):
-        loss = np.array([x['loss'].mean().item() for x in outputs]).mean()
-        loss_l = np.array([x['loss_l'].mean().item() for x in outputs]).mean()
-        loss_ul = np.array([x['loss_ul'].mean().item() for x in outputs]).mean()
-        mlflow_metrics = {'train_loss': loss, 'train_loss_l': loss_l, 'train_loss_ul': loss_ul}
-        return {'loss': loss, 'log': mlflow_metrics}
 
     def validation_epoch_end(self, outputs):
         loss_val_mean = torch.tensor(np.array([x['loss'].cpu().numpy() for x in outputs]).mean())
@@ -147,15 +157,17 @@ class FixMatch(LightningModule):
 
     @staticmethod
     def calculate_metrics(outputs, prefix):
-        preds = np.array([prob for x in outputs for prob in x['preds'].cpu().numpy()])
-        preds = np.argmax(preds, axis=1)
-        labels = np.array([label for x in outputs for label in x['labels'].cpu().numpy()])
+        logits = np.array([prob for x in outputs for prob in x['logits'].cpu().numpy()])
+        targets = np.array([label for x in outputs for label in x['targets'].cpu().numpy()])
         return {
-            prefix + '_acc': simple_accuracy(preds, labels)
+            prefix + '_acc': simple_accuracy(logits, targets)
         }
 
+    def on_epoch_end(self) -> None:
+        self.ul_logger.on_epoch_end(current_epoch=self.trainer.current_epoch + 1)
+
     def on_train_start(self) -> None:
-        if self.artifacts_path is not None:  # Plotting one batch
+        if self.hparams.exp.log_artifacts:  # Plotting one batch of images
             composite_batch = next(iter(self.train_dataloader()))
 
             l_images = composite_batch[0][0][0]
