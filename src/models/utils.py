@@ -53,8 +53,8 @@ class UnlabelledStatisticsLogger:
         if self.level == 'batch':
             # Needs to be rewriten to consider u_scores
 
-            certain_ul_targets = u_targets[thresholding_mask == 1.0].cpu().numpy()
-            all_ul_targets = u_targets.cpu().numpy()
+            # certain_ul_targets = u_targets[thresholding_mask == 1.0].cpu().numpy()
+            # all_ul_targets = u_targets.cpu().numpy()
 
             # result.log('certain_ul_acc', certain_ul_acc, on_epoch=False, on_step=True, sync_dist=True)
             # result.log('all_ul_acc', all_ul_acc, on_epoch=False, on_step=True, sync_dist=True)
