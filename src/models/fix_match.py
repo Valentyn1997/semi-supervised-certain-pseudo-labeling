@@ -8,7 +8,7 @@ import torch.nn.functional as F
 from torch.optim import SGD
 from torch.utils.data import DataLoader
 import numpy as np
-import pandas as pd
+from baal.bayesian import MCDropoutConnectModule
 from pytorch_lightning.core.step_result import TrainResult
 
 from src.models.certainty_strategy import AbstractStrategy
@@ -27,8 +27,16 @@ class FixMatch(LightningModule):
         self.run_id = run_id
         self.datasets_collection = datasets_collection
         self.hparams = args  # Will be logged to mlflow
-        self.model = WideResNet(depth=28, widen_factor=2, drop_rate=self.hparams.model.drop_rate,
-                                num_classes=len(datasets_collection.classes))
+
+        if self.hparams.model.drop_type == 'Dropout':
+            self.model = WideResNet(depth=28, widen_factor=2, drop_rate=self.hparams.model.drop_rate,
+                                    num_classes=len(datasets_collection.classes))
+        elif self.hparams.model.drop_type == 'DropConnect':
+            self.model = WideResNet(depth=28, widen_factor=2, drop_rate=0.0, num_classes=len(datasets_collection.classes))
+            self.model = MCDropoutConnectModule(self.model, layers=['Conv2d'], weight_dropout=self.hparams.model.drop_rate)
+        else:
+            raise NotImplementedError
+
         self.ema_model = WideResNet(depth=28, widen_factor=2, drop_rate=0.0, num_classes=len(datasets_collection.classes))
         self.best_model = self.model  # Placeholder for checkpointing
         self.ema_optimizer = WeightEMA(self.model, self.ema_model, alpha=self.hparams.model.ema_decay)
@@ -103,6 +111,7 @@ class FixMatch(LightningModule):
         with torch.no_grad():
             if self.strategy.is_ensemble:
                 uw_logits = torch.stack([self(uw_images) for _ in range(self.hparams.model.T)]).detach()
+                assert not (uw_logits[0] == uw_logits[1]).all()  # Checking if dropout actually works
             else:
                 uw_logits = self(uw_images).detach()
 
@@ -121,7 +130,7 @@ class FixMatch(LightningModule):
         result.log('train_loss_ul', u_loss, on_epoch=True, on_step=False, sync_dist=True)
 
         # Unlabelled statistics
-        self.ul_logger.log_statistics(result, mask, u_scores, uw_logits, u_targets, u_pseudo_targets, u_ids,
+        self.ul_logger.log_statistics(result, mask, u_scores, u_targets, u_pseudo_targets, u_ids,
                                       current_epoch=self.trainer.current_epoch + 1)
 
         return result

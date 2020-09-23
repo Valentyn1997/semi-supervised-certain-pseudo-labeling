@@ -1,6 +1,7 @@
 from pytorch_lightning.core.step_result import TrainResult
 import pandas as pd
 import torch
+from baal.bayesian import MCDropoutConnectModule
 import numpy as np
 from src.utils import simple_accuracy
 
@@ -10,18 +11,27 @@ class WeightEMA(object):
         self.model = model
         self.ema_model = ema_model
         self.alpha = alpha
-        self.params = list(model.state_dict().values())
-        self.ema_params = list(ema_model.state_dict().values())
 
-        for param, ema_param in zip(self.params, self.ema_params):
-            param.data.copy_(ema_param.data)
+        params = self.model.parent_module.state_dict() if isinstance(self.model, MCDropoutConnectModule) \
+            else self.model.state_dict()
+        ema_params = self.ema_model.state_dict()
+
+        for key in params.keys():
+            if key in ema_params:
+                ema_params[key].data.copy_(params[key].data)
 
     def step(self):
         one_minus_alpha = 1.0 - self.alpha
-        for param, ema_param in zip(list(self.model.state_dict().values()), list(self.ema_model.state_dict().values())):
-            if len(param.shape) > 0:
-                ema_param.mul_(self.alpha)
-                ema_param.add_(param * one_minus_alpha)
+
+        params = self.model.parent_module.state_dict() if isinstance(self.model, MCDropoutConnectModule) \
+            else self.model.state_dict()
+        ema_params = self.ema_model.state_dict()
+
+        for key in params.keys():
+            if key in ema_params:
+                if len(params[key].shape) > 0:
+                    ema_params[key].mul_(self.alpha)
+                    ema_params[key].add_(params[key] * one_minus_alpha)
 
 
 class UnlabelledStatisticsLogger:
@@ -36,25 +46,18 @@ class UnlabelledStatisticsLogger:
     def log_statistics(self, result: TrainResult,
                        thresholding_mask: torch.tensor,
                        u_scores: torch.tensor,
-                       uw_logits: torch.tensor,
                        u_targets: torch.tensor,
                        u_pseudo_targets: torch.tensor,
                        u_ids: torch.tensor,
                        current_epoch: int):
         if self.level == 'batch':
-            certain_logits_uw = uw_logits[thresholding_mask == 1.0].cpu().numpy()
+            # Needs to be rewriten to consider u_scores
+
             certain_ul_targets = u_targets[thresholding_mask == 1.0].cpu().numpy()
-            all_logits_uw = uw_logits.cpu().numpy()
             all_ul_targets = u_targets.cpu().numpy()
 
-            certain_ul_acc = simple_accuracy(certain_logits_uw, certain_ul_targets)
-            certain_ul_acc = torch.tensor(0.0) if np.isnan(certain_ul_acc) else torch.tensor(certain_ul_acc)
-
-            all_ul_acc = simple_accuracy(all_logits_uw, all_ul_targets)
-            all_ul_acc = torch.tensor(all_ul_acc)
-
-            result.log('certain_ul_acc', certain_ul_acc, on_epoch=False, on_step=True, sync_dist=True)
-            result.log('all_ul_acc', all_ul_acc, on_epoch=False, on_step=True, sync_dist=True)
+            # result.log('certain_ul_acc', certain_ul_acc, on_epoch=False, on_step=True, sync_dist=True)
+            # result.log('all_ul_acc', all_ul_acc, on_epoch=False, on_step=True, sync_dist=True)
             result.log('max_probs', u_scores.mean(), on_epoch=False, on_step=True, sync_dist=True)
             result.log('n_certain', thresholding_mask.sum(), on_epoch=False, on_step=True, sync_dist=True)
 

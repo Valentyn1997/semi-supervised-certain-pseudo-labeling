@@ -17,3 +17,4 @@ torch
 pytorch-lightning
 torchvision
 scipy
+baal

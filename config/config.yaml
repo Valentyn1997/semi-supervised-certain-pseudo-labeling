@@ -5,8 +5,9 @@ model: # Model params
   lambda_u: 1.0
   ema_decay: 0.9
   T: 100
-  certainty_strategy: SoftMax #  SoftMax / MeanSoftmax / PECertainty / BALDCertainty / Margin / Entropy
-  drop_rate: 0.0
+  certainty_strategy: MeanSoftmax #  SoftMax / MeanSoftmax / PECertainty / BALDCertainty / Margin / Entropy
+  drop_type: DropConnect  # Dropout, DropConnect
+  drop_rate: 0.25
 
 # Data params
 data:
@@ -23,6 +24,7 @@ data:
 
 # Experiment
 exp:
+  check_val_every_n_epoch: 10   # Evaluate validation subset n-th epoch
   logging: True   # Logging to MlFlow
   mlflow_uri: http://127.0.0.1:5000
   log_artifacts: False  # Logging the artifacts, e.g. images

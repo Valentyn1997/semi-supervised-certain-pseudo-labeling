@@ -64,7 +64,8 @@ def main(args: DictConfig):
                       checkpoint_callback=checkpoint_callback if args.exp.checkpoint else None,
                       auto_lr_find=args.optimizer.auto_lr_find,
                       distributed_backend='dp',
-                      row_log_interval=1)
+                      row_log_interval=1,
+                      check_val_every_n_epoch=args.exp.check_val_every_n_epoch)
     trainer.fit(model)
     trainer.test(model)
 
