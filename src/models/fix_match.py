@@ -39,7 +39,10 @@ class FixMatch(LightningModule):
 
         self.ema_model = WideResNet(depth=28, widen_factor=2, drop_rate=0.0, num_classes=len(datasets_collection.classes))
         self.best_model = self.model  # Placeholder for checkpointing
-        self.ema_optimizer = WeightEMA(self.model, self.ema_model, alpha=self.hparams.model.ema_decay)
+        self.ema_optimizer = WeightEMA(self.model, self.ema_model,
+                                       alpha=self.hparams.model.ema_decay,
+                                       weight_decay=self.hparams.optimizer.weight_decay
+                                       if self.hparams.optimizer.weight_decay_time == 'after' else None)
         self.ul_logger = UnlabelledStatisticsLogger(level=self.hparams.exp.log_ul_statistics, save_frequency=500,
                                                     artifacts_path=self.artifacts_path)
 
@@ -69,7 +72,9 @@ class FixMatch(LightningModule):
         if self.lr is not None:  # After auto_lr_find
             self.hparams.optimizer.lr = self.lr
         return SGD(self.model.parameters(), lr=self.hparams.optimizer.lr, momentum=self.hparams.optimizer.momentum,
-                   nesterov=self.hparams.optimizer.nesterov, weight_decay=self.hparams.optimizer.weight_decay)
+                   nesterov=self.hparams.optimizer.nesterov,
+                   weight_decay=self.hparams.optimizer.weight_decay
+                   if self.hparams.optimizer.weight_decay_time == 'before' else 0)
 
     def train_dataloader(self) -> DataLoader:
         return DataLoader(self.train_dataset, shuffle=True, batch_size=self.hparams.data.batch_size.train, num_workers=2,

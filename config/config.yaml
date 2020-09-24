@@ -5,9 +5,9 @@ model: # Model params
   lambda_u: 1.0
   ema_decay: 0.9
   T: 100
-  certainty_strategy: MeanSoftmax #  SoftMax / MeanSoftmax / PECertainty / BALDCertainty / Margin / Entropy
-  drop_type: DropConnect  # Dropout, DropConnect
-  drop_rate: 0.25
+  certainty_strategy: SoftMax #  SoftMax / MeanSoftmax / PECertainty / BALDCertainty / Margin / Entropy
+  drop_type: Dropout  # Dropout, DropConnect
+  drop_rate: 0.0
 
 # Data params
 data:
@@ -42,6 +42,7 @@ optimizer:
   momentum: 0.9
   nesterov: True
   weight_decay: ???  # Dataset-specific parameter - look to the paper for the specific value
+  weight_decay_time: after  # Perform weight decay 'after' or 'before' EMA update
   lr: 0.03  # The initial learning rate for Adam
   auto_lr_find: False  # Auto lr-finding before training
 
