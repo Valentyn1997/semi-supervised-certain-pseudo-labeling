@@ -41,6 +41,7 @@ class FixMatch(LightningModule):
         self.best_model = self.model  # Placeholder for checkpointing
         self.ema_optimizer = WeightEMA(self.model, self.ema_model,
                                        alpha=self.hparams.model.ema_decay,
+                                       lr=self.hparams.optimizer.lr,
                                        weight_decay=self.hparams.optimizer.weight_decay
                                        if self.hparams.optimizer.weight_decay_time == 'after' else None)
         self.ul_logger = UnlabelledStatisticsLogger(level=self.hparams.exp.log_ul_statistics, save_frequency=500,

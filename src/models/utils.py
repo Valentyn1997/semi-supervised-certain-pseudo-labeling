@@ -7,11 +7,12 @@ from src.utils import simple_accuracy
 
 
 class WeightEMA(object):
-    def __init__(self, model, ema_model, alpha=0.999, weight_decay=None):
+    def __init__(self, model, ema_model, alpha=0.999, weight_decay=None, lr=None):
         self.model = model
         self.ema_model = ema_model
         self.alpha = alpha
         self.weight_decay = weight_decay
+        self.lr = lr
 
         params = self.model.parent_module.state_dict() if isinstance(self.model, MCDropoutConnectModule) \
             else self.model.state_dict()
@@ -34,10 +35,10 @@ class WeightEMA(object):
                     ema_params[key].mul_(self.alpha)
                     ema_params[key].add_(params[key] * one_minus_alpha)
 
-        if self.weight_decay is not None:
+        if self.weight_decay is not None and self.lr is not None:
             for param in params.values():
                 if len(param.shape) > 0:
-                    param.mul_(1 - self.weight_decay)
+                    param.mul_(1 - self.weight_decay * self.lr)
 
 
 class UnlabelledStatisticsLogger:
