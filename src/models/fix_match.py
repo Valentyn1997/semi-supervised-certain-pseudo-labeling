@@ -9,6 +9,7 @@ from torch.optim import SGD
 from torch.utils.data import DataLoader
 import numpy as np
 from baal.bayesian import MCDropoutConnectModule
+from baal.bayesian.weight_drop import patch_module
 from pytorch_lightning.core.step_result import TrainResult
 
 from src.models.certainty_strategy import AbstractStrategy
@@ -16,6 +17,10 @@ from src.utils import simple_accuracy
 from src.models.utils import WeightEMA, UnlabelledStatisticsLogger
 from src.models.backbones import WideResNet
 from src.data.ssl_datasets import SLLDatasetsCollection, FixMatchCompositeTrainDataset
+
+#
+# def new_to(self, device):
+#     self.parent_module.to(device)
 
 
 class FixMatch(LightningModule):
@@ -33,7 +38,8 @@ class FixMatch(LightningModule):
                                     num_classes=len(datasets_collection.classes))
         elif self.hparams.model.drop_type == 'DropConnect':
             self.model = WideResNet(depth=28, widen_factor=2, drop_rate=0.0, num_classes=len(datasets_collection.classes))
-            self.model = MCDropoutConnectModule(self.model, layers=['Conv2d'], weight_dropout=self.hparams.model.drop_rate)
+            self.model = patch_module(self.model, layers=['Conv2d'], weight_dropout=self.hparams.model.drop_rate, inplace=False)
+            # self.model.to = new_to
         else:
             raise NotImplementedError
 
