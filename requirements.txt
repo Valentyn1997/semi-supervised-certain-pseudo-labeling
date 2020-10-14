@@ -16,5 +16,4 @@ mlflow
 torch
 pytorch-lightning==0.9.0
 torchvision
-scipy
 baal
