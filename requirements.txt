@@ -14,6 +14,6 @@ hydra-core
 hydra_colorlog
 mlflow
 torch
-pytorch-lightning
+pytorch-lightning==0.9.0
 torchvision
-scipy
+baal

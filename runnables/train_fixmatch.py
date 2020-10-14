@@ -24,7 +24,7 @@ def main(args: DictConfig):
 
     # MlFlow Logging
     if args.exp.logging:
-        experiment_name = f'FixMatch/{dataset_name}'
+        experiment_name = f'FixMatch/{dataset_name}/{args.model.certainty_strategy}'
         mlf_logger = MLFlowLogger(experiment_name=experiment_name, tracking_uri=args.exp.mlflow_uri)
 
         run_id = mlf_logger.run_id
@@ -64,7 +64,8 @@ def main(args: DictConfig):
                       checkpoint_callback=checkpoint_callback if args.exp.checkpoint else None,
                       auto_lr_find=args.optimizer.auto_lr_find,
                       distributed_backend='dp',
-                      row_log_interval=1)
+                      row_log_interval=1,
+                      check_val_every_n_epoch=args.exp.check_val_every_n_epoch)
     trainer.fit(model)
     trainer.test(model)
 

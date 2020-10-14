@@ -5,7 +5,8 @@ model: # Model params
   lambda_u: 1.0
   ema_decay: 0.9
   T: 100
-  certainty_strategy: "SoftMax" #  SoftMax / MeanSoftmax / PECertainty / BALDCertainty / Margin / Entropy
+  certainty_strategy: SoftMax #  SoftMax / MeanSoftmax / PECertainty / BALDCertainty / Margin / Entropy
+  drop_type: Dropout  # Dropout, DropConnect
   drop_rate: 0.0
 
 # Data params
@@ -23,10 +24,11 @@ data:
 
 # Experiment
 exp:
+  check_val_every_n_epoch: 10   # Evaluate validation subset n-th epoch
   logging: True   # Logging to MlFlow
-  mlflow_uri: http://127.0.0.1:5000
+  mlflow_uri: http://127.0.0.1:5005
   log_artifacts: False  # Logging the artifacts, e.g. images
-  log_ul_statistics: image  # Logging the statistics about unlabelled data: batch / image / False
+  log_ul_statistics: False  # Logging the statistics about unlabelled data: batch / image / False
   max_epochs: 10000  # Total number of training epochs to perform.
   early_stopping: False
   early_stopping_patience: 100  #  Number of epochs to wait for early stopping, used if early_stopping is True
@@ -40,6 +42,7 @@ optimizer:
   momentum: 0.9
   nesterov: True
   weight_decay: ???  # Dataset-specific parameter - look to the paper for the specific value
+  weight_decay_time: after  # Perform weight decay 'after' or 'before' EMA update
   lr: 0.03  # The initial learning rate for Adam
   auto_lr_find: False  # Auto lr-finding before training
 
