@@ -84,14 +84,14 @@ class FixMatch(LightningModule):
                    if self.hparams.optimizer.weight_decay_time == 'before' else 0)
 
     def train_dataloader(self) -> DataLoader:
-        return DataLoader(self.train_dataset, shuffle=True, batch_size=self.hparams.data.batch_size.train, num_workers=2,
+        return DataLoader(self.train_dataset, shuffle=True, batch_size=self.hparams.data.batch_size.train, num_workers=5,
                           drop_last=self.hparams.exp.drop_last_batch)
 
     def val_dataloader(self) -> DataLoader:
-        return DataLoader(self.val_dataset, shuffle=False, batch_size=self.hparams.data.batch_size.val)
+        return DataLoader(self.val_dataset, shuffle=False, batch_size=self.hparams.data.batch_size.val, num_workers=5)
 
     def test_dataloader(self) -> DataLoader:
-        return DataLoader(self.test_dataset, shuffle=False, batch_size=self.hparams.data.batch_size.test)
+        return DataLoader(self.test_dataset, shuffle=False, batch_size=self.hparams.data.batch_size.test, num_workers=5)
 
     def optimizer_step(self, *args, **kwargs) -> None:
         super().optimizer_step(*args, **kwargs)
@@ -105,7 +105,7 @@ class FixMatch(LightningModule):
         elif model == 'ema':
             return self.ema_model(batch)
 
-    def training_step(self, composite_batch, batch_idx):
+    def training_step(self, composite_batch, batch_ind):
         l_targets = composite_batch[0][0][1]
         l_images = composite_batch[0][0][0]
 
@@ -147,7 +147,7 @@ class FixMatch(LightningModule):
 
         return result
 
-    def validation_step(self, batch, batch_idx):
+    def validation_step(self, batch, batch_ind):
         results = {}
         images, targets, ids = batch
         logits = self(images, model='ema')
@@ -157,7 +157,7 @@ class FixMatch(LightningModule):
         results['targets'] = targets.detach()
         return results
 
-    def test_step(self, batch, batch_idx):
+    def test_step(self, batch, batch_ind):
         results = {}
         images, targets, ids = batch
         logits = self(images, model='best')

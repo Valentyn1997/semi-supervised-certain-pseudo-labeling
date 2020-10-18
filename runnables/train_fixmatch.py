@@ -73,6 +73,10 @@ def main(args: DictConfig):
     if args.exp.logging:
         mlf_logger.finalize()
 
+    trainer.reset_train_dataloader(model)
+    trainer.reset_val_dataloader(model)
+    trainer.reset_test_dataloader(model)
+
 
 if __name__ == "__main__":
     main()
