@@ -16,6 +16,7 @@ from src.models.certainty_strategy import AbstractStrategy
 from src.utils import simple_accuracy
 from src.models.utils import WeightEMA, UnlabelledStatisticsLogger
 from src.models.backbones import WideResNet
+from src.models.certainty_strategy import MultiStrategies
 from src.data.ssl_datasets import SLLDatasetsCollection, FixMatchCompositeTrainDataset
 
 #
@@ -24,12 +25,10 @@ from src.data.ssl_datasets import SLLDatasetsCollection, FixMatchCompositeTrainD
 
 
 class FixMatch(LightningModule):
-    def __init__(self, args: DictConfig, datasets_collection: SLLDatasetsCollection, artifacts_path: str = None,
-                 run_id: str = None):
+    def __init__(self, args: DictConfig, datasets_collection: SLLDatasetsCollection, artifacts_path: str = None):
         super().__init__()
         self.lr = None  # Placeholder for auto_lr_find
         self.artifacts_path = artifacts_path
-        self.run_id = run_id
         self.datasets_collection = datasets_collection
         self.hparams = args  # Will be logged to mlflow
 
@@ -50,7 +49,8 @@ class FixMatch(LightningModule):
                                        lr=self.hparams.optimizer.lr,
                                        weight_decay=self.hparams.optimizer.weight_decay
                                        if self.hparams.optimizer.weight_decay_time == 'after' else None)
-        self.ul_logger = UnlabelledStatisticsLogger(level=self.hparams.exp.log_ul_statistics, save_frequency=500,
+        self.ul_logger = UnlabelledStatisticsLogger(level=self.hparams.exp.log_ul_statistics,
+                                                    save_frequency=self.hparams.exp.log_ul_statistics_freq,
                                                     artifacts_path=self.artifacts_path)
 
         # Initialisation of certainty strategy
@@ -105,7 +105,8 @@ class FixMatch(LightningModule):
         elif model == 'ema':
             return self.ema_model(batch)
 
-    def training_step(self, composite_batch, batch_ind):
+    @staticmethod
+    def _split_batch(composite_batch):
         l_targets = composite_batch[0][0][1]
         l_images = composite_batch[0][0][0]
 
@@ -113,6 +114,11 @@ class FixMatch(LightningModule):
         u_ids = torch.cat([item[2] for item in composite_batch[1]])
         uw_images = torch.cat([item[0][0] for item in composite_batch[1]])
         us_images = torch.cat([item[0][1] for item in composite_batch[1]])
+
+        return l_targets, l_images, u_targets, u_ids, uw_images, us_images
+
+    def training_step(self, composite_batch, batch_ind):
+        l_targets, l_images, u_targets, u_ids, uw_images, us_images = self._split_batch(composite_batch)
 
         # Supervised loss
         l_logits = self(l_images)
@@ -123,13 +129,17 @@ class FixMatch(LightningModule):
         with torch.no_grad():
             if self.strategy.is_ensemble:
                 uw_logits = torch.stack([self(uw_images) for _ in range(self.hparams.model.T)]).detach()
-                assert not (uw_logits[0] == uw_logits[1]).all()  # Checking if dropout actually works
+                assert not (uw_logits[0] == uw_logits[1]).all()  # Checking if logits are actually different
             else:
                 uw_logits = self(uw_images).detach()
 
         # get the value of the max, and the index (between 1 and 10 for CIFAR10 for example)
         uw_pseudo_soft_targets = torch.softmax(uw_logits, dim=-1)
         u_scores, u_pseudo_targets = self.strategy.get_certainty_and_label(softmax_outputs=uw_pseudo_soft_targets)
+
+        # Unlabelled statistics
+        self.ul_logger.log_statistics(u_scores, u_targets, u_pseudo_targets, u_ids, current_epoch=self.trainer.current_epoch + 1)
+
         mask = u_scores.ge(self.hparams.model.threshold).float()
         u_loss = (F.cross_entropy(us_logits, u_pseudo_targets, reduction='none') * mask).mean()
 
@@ -140,10 +150,6 @@ class FixMatch(LightningModule):
         result.log('train_loss', loss, on_epoch=True, on_step=False, sync_dist=True)
         result.log('train_loss_l', l_loss, on_epoch=True, on_step=False, sync_dist=True)
         result.log('train_loss_ul', u_loss, on_epoch=True, on_step=False, sync_dist=True)
-
-        # Unlabelled statistics
-        self.ul_logger.log_statistics(result, mask, u_scores, u_targets, u_pseudo_targets, u_ids,
-                                      current_epoch=self.trainer.current_epoch + 1)
 
         return result
 
@@ -207,3 +213,55 @@ class FixMatch(LightningModule):
             img = vutils.make_grid(uw_images, padding=5, normalize=True, nrow=16)
             img_path = f'{self.artifacts_path}/train_unlabelled_weak.png'
             vutils.save_image(img, img_path)
+
+
+class MultiStrategyFixMatch(FixMatch):
+
+    def __init__(self, args: DictConfig, datasets_collection: SLLDatasetsCollection, artifacts_path: str = None):
+        super().__init__(args, datasets_collection, artifacts_path)
+
+        # Re-initialisation of strategies
+        self.decision_strategy = self.strategy.__class__.__name__
+        self.strategy = MultiStrategies()
+
+    def training_step(self, composite_batch, batch_ind):
+        l_targets, l_images, u_targets, u_ids, uw_images, us_images = self._split_batch(composite_batch)
+
+        # Supervised loss
+        l_logits = self(l_images)
+        l_loss = F.cross_entropy(l_logits, l_targets, reduction='mean')
+
+        # Unsupervised loss
+        us_logits = self(us_images)
+        with torch.no_grad():
+            uw_logits = self(uw_images).detach()
+
+            uw_logits_ensemble = torch.stack([self(uw_images) for _ in range(self.hparams.model.T)]).detach()
+            assert not (uw_logits_ensemble[0] == uw_logits_ensemble[1]).all()  # Checking if logits are actually different
+
+        for strategy_name in self.strategy.strategies.keys():
+
+            if self.strategy.strategies[strategy_name].is_ensemble:
+                uw_pseudo_soft_targets = torch.softmax(uw_logits_ensemble, dim=-1)
+            else:
+                uw_pseudo_soft_targets = torch.softmax(uw_logits, dim=-1)
+
+            u_scores, u_pseudo_targets = self.strategy.get_certainty_and_label(uw_pseudo_soft_targets, strategy_name)
+            # Unlabelled statistics
+            self.ul_logger.log_statistics(u_scores, u_targets, u_pseudo_targets, u_ids,
+                                          current_epoch=self.trainer.current_epoch + 1,
+                                          strategy_name=strategy_name)
+
+            if strategy_name == self.decision_strategy:
+                mask = u_scores.ge(self.hparams.model.threshold).float()
+                u_loss = (F.cross_entropy(us_logits, u_pseudo_targets, reduction='none') * mask).mean()
+
+        # Train loss / labelled accuracy
+        loss = l_loss + self.hparams.model.lambda_u * u_loss
+
+        result = TrainResult(minimize=loss)
+        result.log('train_loss', loss, on_epoch=True, on_step=False, sync_dist=True)
+        result.log('train_loss_l', l_loss, on_epoch=True, on_step=False, sync_dist=True)
+        result.log('train_loss_ul', u_loss, on_epoch=True, on_step=False, sync_dist=True)
+
+        return result

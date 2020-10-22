@@ -1,6 +1,6 @@
 import sys
 from abc import ABC
-from typing import Tuple
+from typing import Tuple, Dict
 
 import torch
 
@@ -94,3 +94,12 @@ class PECertainty(AbstractStrategy):
         mean_entropy = entropy(mean)
         certainty = 1 / (1 + mean_entropy)
         return certainty, targets_u
+
+
+class MultiStrategies(AbstractStrategy):
+    def __init__(self):
+        self.strategies = [Entropy(), Margin(), SoftMax(), MeanSoftmax(), BALDCertainty(), PECertainty()]
+        self.strategies = {k: v for (k, v) in zip(map(lambda s: s.__class__.__name__, self.strategies), self.strategies)}
+
+    def get_certainty_and_label(self, softmax_outputs: torch.Tensor, strategy_name: str) -> Tuple[torch.Tensor, torch.Tensor]:
+        return self.strategies[strategy_name].get_certainty_and_label(softmax_outputs)

@@ -6,6 +6,7 @@ model: # Model params
   ema_decay: 0.9
   T: 100
   certainty_strategy: SoftMax #  SoftMax / MeanSoftmax / PECertainty / BALDCertainty / Margin / Entropy
+  multi_strategy: True  # If True - all strategies' statistics are logged, decision is made with certainty_strategy
   drop_type: Dropout  # Dropout, DropConnect
   drop_rate: 0.0
 
@@ -29,6 +30,7 @@ exp:
   mlflow_uri: http://127.0.0.1:5004
   log_artifacts: False  # Logging the artifacts, e.g. images
   log_ul_statistics: image  # Logging the statistics about unlabelled data: batch / image / False
+  log_ul_statistics_freq: 250  # CSV-files saving frequency
   max_epochs: 10000  # Total number of training epochs to perform.
   early_stopping: False
   early_stopping_patience: 100  #  Number of epochs to wait for early stopping, used if early_stopping is True
