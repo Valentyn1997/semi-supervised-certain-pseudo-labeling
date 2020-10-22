@@ -26,7 +26,9 @@ class SLLDatasetsCollection:
         self.n_labelled = n_labelled
         mkdir(self.dataset_path) if not exists(self.dataset_path) else None
         self.Dataset = getattr(torchvision.datasets, source)
-        self.Dataset.__getitem__ = getitem_wrapper(self.Dataset.__getitem__)
+        if not hasattr(self.Dataset, 'new_getitem'):  # Disable multiple wrapping while multi-run
+            self.Dataset.__getitem__ = getitem_wrapper(self.Dataset.__getitem__)
+            self.Dataset.new_getitem = True
 
         if source in ['CIFAR10', 'CIFAR100']:
             self.train_dataset = self.Dataset(root=self.dataset_path, train=True, download=True)
