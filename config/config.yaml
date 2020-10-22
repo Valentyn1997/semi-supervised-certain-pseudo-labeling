@@ -28,7 +28,7 @@ exp:
   logging: True   # Logging to MlFlow
   mlflow_uri: http://127.0.0.1:5004
   log_artifacts: False  # Logging the artifacts, e.g. images
-  log_ul_statistics: False  # Logging the statistics about unlabelled data: batch / image / False
+  log_ul_statistics: image  # Logging the statistics about unlabelled data: batch / image / False
   max_epochs: 10000  # Total number of training epochs to perform.
   early_stopping: False
   early_stopping_patience: 100  #  Number of epochs to wait for early stopping, used if early_stopping is True

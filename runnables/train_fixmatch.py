@@ -7,7 +7,7 @@ from pytorch_lightning import Trainer
 from pytorch_lightning.loggers import MLFlowLogger
 from pytorch_lightning.callbacks.early_stopping import EarlyStopping
 
-from src import CONFIG_PATH, ROOT_PATH
+from src import CONFIG_PATH, GLOBAL_ARTIFACTS_PATH
 from src.utils import set_seed, CustomModelCheckpoint
 from src.models.fix_match import FixMatch
 from src.data.ssl_datasets import SLLDatasetsCollection
@@ -29,7 +29,7 @@ def main(args: DictConfig):
 
         run_id = mlf_logger.run_id
         experiment_id = mlf_logger.experiment.get_experiment_by_name(experiment_name).experiment_id
-        artifacts_path = f'{ROOT_PATH}/mlruns/{experiment_id}/{run_id}/artifacts'
+        artifacts_path = f'{GLOBAL_ARTIFACTS_PATH}/mlruns/{experiment_id}/{run_id}/artifacts'
     else:
         artifacts_path = None
 
