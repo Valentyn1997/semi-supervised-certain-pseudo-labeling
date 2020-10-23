@@ -50,14 +50,15 @@ class UnlabelledStatisticsLogger:
         self.artifacts_path = artifacts_path
         self.logging_df = pd.DataFrame()
 
-    def log_statistics(self, result: TrainResult,
-                       thresholding_mask: torch.tensor,
+    def log_statistics(self,
                        u_scores: torch.tensor,
                        u_targets: torch.tensor,
                        u_pseudo_targets: torch.tensor,
                        u_ids: torch.tensor,
-                       current_epoch: int):
+                       current_epoch: int,
+                       strategy_name=None):
         if self.level == 'batch':
+            raise NotImplementedError()
             # Needs to be rewriten to consider u_scores
 
             # certain_ul_targets = u_targets[thresholding_mask == 1.0].cpu().numpy()
@@ -65,8 +66,8 @@ class UnlabelledStatisticsLogger:
 
             # result.log('certain_ul_acc', certain_ul_acc, on_epoch=False, on_step=True, sync_dist=True)
             # result.log('all_ul_acc', all_ul_acc, on_epoch=False, on_step=True, sync_dist=True)
-            result.log('max_probs', u_scores.mean(), on_epoch=False, on_step=True, sync_dist=True)
-            result.log('n_certain', thresholding_mask.sum(), on_epoch=False, on_step=True, sync_dist=True)
+            # result.log('max_probs', u_scores.mean(), on_epoch=False, on_step=True, sync_dist=True)
+            # result.log('n_certain', thresholding_mask.sum(), on_epoch=False, on_step=True, sync_dist=True)
 
         elif self.level == 'image':
             batch_df = pd.DataFrame(index=range(len(u_ids)))
@@ -74,6 +75,8 @@ class UnlabelledStatisticsLogger:
             batch_df['score'] = u_scores.tolist()
             batch_df['correctness'] = (u_pseudo_targets == u_targets).tolist()
             batch_df['epoch'] = current_epoch
+            if strategy_name is not None:
+                batch_df['strategy'] = strategy_name
             self.batch_dfs.append(batch_df)
 
     def on_epoch_end(self, current_epoch):

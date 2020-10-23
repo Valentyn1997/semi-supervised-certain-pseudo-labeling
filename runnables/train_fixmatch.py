@@ -9,7 +9,7 @@ from pytorch_lightning.callbacks.early_stopping import EarlyStopping
 
 from src import CONFIG_PATH, GLOBAL_ARTIFACTS_PATH
 from src.utils import set_seed, CustomModelCheckpoint
-from src.models.fix_match import FixMatch
+from src.models.fix_match import FixMatch, MultiStrategyFixMatch
 from src.data.ssl_datasets import SLLDatasetsCollection
 from src.data.augmentations import BasicTransformation, WeakAugment, StrongAugment, WeakStrongAugment
 
@@ -47,7 +47,10 @@ def main(args: DictConfig):
                                                 train_l_transform=train_l_transform,
                                                 train_ul_transform=train_ul_transform,
                                                 test_transform=basic_transform)
-    model = FixMatch(args, datasets_collection, artifacts_path=artifacts_path, run_id=run_id)
+
+    # Model init
+    model_class = MultiStrategyFixMatch if args.model.multi_strategy else FixMatch
+    model = model_class(args, datasets_collection, artifacts_path=artifacts_path)
 
     # Early stopping & Checkpointing
     early_stop_callback = EarlyStopping(monitor='val_loss', min_delta=0.00, patience=args.exp.early_stopping_patience,
