@@ -36,13 +36,14 @@ class FixMatch(LightningModule):
             self.model = WideResNet(depth=28, widen_factor=2, drop_rate=self.hparams.model.drop_rate,
                                     num_classes=len(datasets_collection.classes))
         elif self.hparams.model.drop_type == 'DropConnect':
-            self.model = WideResNet(depth=28, widen_factor=2, drop_rate=0.0, num_classes=len(datasets_collection.classes))
-            self.model = patch_module(self.model, layers=['Conv2d'], weight_dropout=self.hparams.model.drop_rate, inplace=False)
+            self.model = WideResNet(depth=28, widen_factor=2, drop_rate=0.0, weight_dropout=self.hparams.model.drop_rate,
+                                    num_classes=len(datasets_collection.classes))
+            # self.model = patch_module(self.model, layers=['Conv2d'], weight_dropout=self.hparams.model.drop_rate, inplace=False)
             # self.model.to = new_to
         else:
             raise NotImplementedError
 
-        self.ema_model = WideResNet(depth=28, widen_factor=2, drop_rate=0.0, num_classes=len(datasets_collection.classes))
+        self.ema_model = WideResNet(depth=28, widen_factor=2, num_classes=len(datasets_collection.classes))
         self.best_model = self.model  # Placeholder for checkpointing
         self.ema_optimizer = WeightEMA(self.model, self.ema_model,
                                        alpha=self.hparams.model.ema_decay,
