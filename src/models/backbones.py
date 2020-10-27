@@ -4,7 +4,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from torch.nn.modules.utils import _pair
+from src.models.dropouts import WeightDropLinear, WeightDropConv2d
 
 logger = logging.getLogger(__name__)
 
@@ -23,47 +23,9 @@ class PSBatchNorm2d(nn.BatchNorm2d):
         return super().forward(x) + self.alpha
 
 
-class WeightDropConv2d(nn.Conv2d):
-    """
-    Reimplementing baal version of WeightDropConv2d, because it doesn't support multi-GPU training
-    For details, see https://github.com/pytorch/pytorch/issues/8637
-    """
-    def __init__(self, weight_dropout=0.0, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.weight_dropout = weight_dropout
-
-    def forward(self, input: torch.Tensor) -> torch.Tensor:
-        dropped_weight = torch.nn.functional.dropout(self.weight, p=self.weight_dropout, training=True)
-        if self.bias is not None:
-            dropped_bias = torch.nn.functional.dropout(self.bias, p=self.weight_dropout, training=True)
-            return self._conv_forward(input, dropped_weight, dropped_bias)
-        else:
-            return self._conv_forward(input, dropped_weight, self.bias)
-
-    def _conv_forward(self, input, weight, bias):
-        if self.padding_mode != 'zeros':
-            return F.conv2d(F.pad(input, self._reversed_padding_repeated_twice, mode=self.padding_mode),
-                            weight, bias, self.stride, _pair(0), self.dilation, self.groups)
-        return F.conv2d(input, weight, bias, self.stride, self.padding, self.dilation, self.groups)
-
-
-class WeightDropLinear(nn.Linear):
-    """
-    Reimplementing baal version of WeightDropLinear, because it doesn't support multi-GPU training
-    For details, see https://github.com/pytorch/pytorch/issues/8637
-    """
-    def __init__(self, weight_dropout=0.0, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.weight_dropout = weight_dropout
-
-    def forward(self, input: torch.Tensor) -> torch.Tensor:
-        dropped_weight = torch.nn.functional.dropout(self.weight, p=self.weight_dropout, training=True)
-        dropped_bias = torch.nn.functional.dropout(self.bias, p=self.weight_dropout, training=True)
-        return F.linear(input, dropped_weight, dropped_bias)
-
-
 class BasicBlock(nn.Module):
-    def __init__(self, in_planes, out_planes, stride, drop_rate=0.0, weight_dropout=0.0, activate_before_residual=False):
+    def __init__(self, in_planes, out_planes, stride, drop_rate=0.0, weight_dropout=0.0, dropout_method=F.dropout,
+                 activate_before_residual=False):
         super(BasicBlock, self).__init__()
         if weight_dropout == 0.0:
             self.conv1 = nn.Conv2d(in_planes, out_planes, kernel_size=3, stride=stride, padding=1, bias=False)
@@ -81,6 +43,7 @@ class BasicBlock(nn.Module):
         self.equalInOut = (in_planes == out_planes)
         self.convShortcut = (not self.equalInOut) and nn.Conv2d(in_planes, out_planes, kernel_size=1, stride=stride,
                                                                 padding=0, bias=False) or None
+        self.dropout_method = dropout_method
         self.activate_before_residual = activate_before_residual
 
     def forward(self, x):
@@ -90,23 +53,24 @@ class BasicBlock(nn.Module):
             out = self.relu1(self.bn1(x))
         out = self.relu2(self.bn2(self.conv1(out if self.equalInOut else x)))
         if self.drop_rate > 0:
-            out = F.dropout(out, p=self.drop_rate, training=self.training)
+            out = self.dropout_method(out, p=self.drop_rate, training=self.training)
         out = self.conv2(out)
         return torch.add(x if self.equalInOut else self.convShortcut(x), out)
 
 
 class NetworkBlock(nn.Module):
     def __init__(self, nb_layers, in_planes, out_planes, block, stride, drop_rate=0.0, weight_dropout=0.0,
-                 activate_before_residual=False):
+                 dropout_method=F.dropout, activate_before_residual=False):
         super(NetworkBlock, self).__init__()
-        self.layer = self._make_layer(
-            block, in_planes, out_planes, nb_layers, stride, drop_rate, weight_dropout, activate_before_residual)
+        self.layer = self._make_layer(block, in_planes, out_planes, nb_layers, stride, drop_rate, weight_dropout, dropout_method,
+                                      activate_before_residual)
 
-    def _make_layer(self, block, in_planes, out_planes, nb_layers, stride, drop_rate, weight_dropout, activate_before_residual):
+    def _make_layer(self, block, in_planes, out_planes, nb_layers, stride, drop_rate, weight_dropout, dropout_method,
+                    activate_before_residual):
         layers = []
         for i in range(int(nb_layers)):
             layers.append(block(i == 0 and in_planes or out_planes, out_planes,
-                                i == 0 and stride or 1, drop_rate, weight_dropout, activate_before_residual))
+                                i == 0 and stride or 1, drop_rate, weight_dropout, dropout_method, activate_before_residual))
         return nn.Sequential(*layers)
 
     def forward(self, x):
@@ -114,7 +78,8 @@ class NetworkBlock(nn.Module):
 
 
 class WideResNet(nn.Module):
-    def __init__(self, num_classes, depth=28, widen_factor=2, drop_rate=0.0, weight_dropout=0.0):
+    def __init__(self, num_classes, depth=28, widen_factor=2, drop_rate=0.0, weight_dropout=0.0, dropout_method=F.dropout,
+                 after_bn_drop_rate=0.0):
         super(WideResNet, self).__init__()
         channels = [16, 16 * widen_factor, 32 * widen_factor, 64 * widen_factor]
         assert ((depth - 4) % 6 == 0)
@@ -124,12 +89,12 @@ class WideResNet(nn.Module):
         self.conv1 = nn.Conv2d(3, channels[0], kernel_size=3, stride=1,
                                padding=1, bias=False)
         # 1st block
-        self.block1 = NetworkBlock(n, channels[0], channels[1], block, 1, drop_rate, weight_dropout,
+        self.block1 = NetworkBlock(n, channels[0], channels[1], block, 1, drop_rate, weight_dropout, dropout_method,
                                    activate_before_residual=True)
         # 2nd block
-        self.block2 = NetworkBlock(n, channels[1], channels[2], block, 2, drop_rate, weight_dropout)
+        self.block2 = NetworkBlock(n, channels[1], channels[2], block, 2, drop_rate, weight_dropout, dropout_method)
         # 3rd block
-        self.block3 = NetworkBlock(n, channels[2], channels[3], block, 2, drop_rate, weight_dropout)
+        self.block3 = NetworkBlock(n, channels[2], channels[3], block, 2, drop_rate, weight_dropout, dropout_method)
         # global average pooling and classifier
         self.bn1 = PSBatchNorm2d(channels[3], momentum=0.001)
         self.relu = nn.LeakyReLU(negative_slope=0.1, inplace=True)
@@ -138,6 +103,7 @@ class WideResNet(nn.Module):
         else:
             self.fc = WeightDropLinear(weight_dropout, channels[3], num_classes)
         self.channels = channels[3]
+        self.after_bn_drop_rate = after_bn_drop_rate
 
         for m in self.modules():
             if isinstance(m, nn.Conv2d) or isinstance(m, WeightDropConv2d):
@@ -157,4 +123,6 @@ class WideResNet(nn.Module):
         out = self.relu(self.bn1(out))
         out = F.adaptive_avg_pool2d(out, 1)
         out = out.view(-1, self.channels)
+        if self.after_bn_drop_rate > 0.0:
+            out = F.dropout(out, p=self.after_bn_drop_rate, training=self.training)
         return self.fc(out)
