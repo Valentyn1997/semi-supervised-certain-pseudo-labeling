@@ -136,7 +136,7 @@ class FixMatch(LightningModule):
         # get the value of the max, and the index (between 1 and 10 for CIFAR10 for example)
         uw_pseudo_soft_targets = torch.softmax(uw_logits, dim=-1)
         u_scores, u_pseudo_targets = self.strategy.get_certainty_and_label(softmax_outputs=uw_pseudo_soft_targets)
-
+        assert not any(torch.isnan(u_scores))
         # Unlabelled statistics
         self.ul_logger.log_statistics(u_scores, u_targets, u_pseudo_targets, u_ids, current_epoch=self.trainer.current_epoch + 1)
 
