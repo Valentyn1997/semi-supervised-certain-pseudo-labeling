@@ -8,10 +8,9 @@ import torch.nn.functional as F
 from torch.optim import SGD
 from torch.utils.data import DataLoader
 import numpy as np
-from baal.bayesian import MCDropoutConnectModule
-from baal.bayesian.weight_drop import patch_module
 from pytorch_lightning.core.step_result import TrainResult
 
+from src.models.dropouts import uniform_dropout
 from src.models.certainty_strategy import AbstractStrategy
 from src.utils import simple_accuracy
 from src.models.utils import WeightEMA, UnlabelledStatisticsLogger
@@ -36,13 +35,21 @@ class FixMatch(LightningModule):
             self.model = WideResNet(depth=28, widen_factor=2, drop_rate=self.hparams.model.drop_rate,
                                     num_classes=len(datasets_collection.classes))
         elif self.hparams.model.drop_type == 'DropConnect':
-            self.model = WideResNet(depth=28, widen_factor=2, drop_rate=0.0, num_classes=len(datasets_collection.classes))
-            self.model = patch_module(self.model, layers=['Conv2d'], weight_dropout=self.hparams.model.drop_rate, inplace=False)
-            # self.model.to = new_to
+            self.model = WideResNet(depth=28, widen_factor=2, drop_rate=0.0, weight_dropout=self.hparams.model.drop_rate,
+                                    num_classes=len(datasets_collection.classes))
+        elif self.hparams.model.drop_type == 'AlphaDropout':
+            self.model = WideResNet(depth=28, widen_factor=2, drop_rate=self.hparams.model.drop_rate,
+                                    num_classes=len(datasets_collection.classes), dropout_method=F.alpha_dropout)
+        elif self.hparams.model.drop_type == 'AfterBNDropout':
+            self.model = WideResNet(depth=28, widen_factor=2, num_classes=len(datasets_collection.classes),
+                                    after_bn_drop_rate=self.hparams.model.drop_rate)
+        elif self.hparams.model.drop_type == 'UniformDropout':
+            self.model = WideResNet(depth=28, widen_factor=2, drop_rate=self.hparams.model.drop_rate,
+                                    num_classes=len(datasets_collection.classes), dropout_method=uniform_dropout)
         else:
             raise NotImplementedError
 
-        self.ema_model = WideResNet(depth=28, widen_factor=2, drop_rate=0.0, num_classes=len(datasets_collection.classes))
+        self.ema_model = WideResNet(depth=28, widen_factor=2, num_classes=len(datasets_collection.classes))
         self.best_model = self.model  # Placeholder for checkpointing
         self.ema_optimizer = WeightEMA(self.model, self.ema_model,
                                        alpha=self.hparams.model.ema_decay,
@@ -235,7 +242,6 @@ class MultiStrategyFixMatch(FixMatch):
         us_logits = self(us_images)
         with torch.no_grad():
             uw_logits = self(uw_images).detach()
-
             uw_logits_ensemble = torch.stack([self(uw_images) for _ in range(self.hparams.model.T)]).detach()
             assert not (uw_logits_ensemble[0] == uw_logits_ensemble[1]).all()  # Checking if logits are actually different
 
