@@ -94,7 +94,7 @@ class PECertainty(AbstractStrategy):
         mean = torch.mean(softmax_outputs, dim=0)
         max_probs, targets_u = torch.max(torch.mean(softmax_outputs, dim=0), dim=-1)
 
-        mean_entropy = entropy(torch.as_tensor(mean, dtype=torch.float64))
+        mean_entropy = entropy(torch.as_tensor(mean, dtype=torch.float64)).to(softmax_outputs.device)
         certainty = 1 / (1 + mean_entropy)
         return certainty, targets_u
 
