@@ -1,18 +1,19 @@
-import sys
 from abc import ABC
 from typing import Tuple
 
 import torch
 
 
-def entropy(data: torch.Tensor) -> torch.Tensor:
-    epsilon = torch.as_tensor(sys.float_info.min, dtype=torch.float64)
-    return -torch.sum(data * torch.log(data + epsilon), dim=-1)
+def entropy(logits: torch.Tensor) -> torch.Tensor:
+    _log = torch.log(logits)
+    _log[_log == float('-inf')] = 0  # set -inf value to 0 as they should add zero information to entropy anyways
+    return -torch.sum(logits * _log, dim=-1)
 
 
 def mutual_information(logits: torch.Tensor) -> torch.Tensor:
-    epsilon = sys.float_info.min
-    mi = entropy(logits.mean(0)) - torch.mean(torch.sum(-logits * torch.log(logits + epsilon), -1), 0)
+    _log = torch.log(logits)
+    _log[_log == float('-inf')] = 0
+    mi = entropy(logits.mean(0)) - torch.mean(torch.sum(-logits * _log, -1), 0)
     return mi
 
 
@@ -34,7 +35,7 @@ class Entropy(AbstractStrategy):
 
     def get_certainty_and_label(self, softmax_outputs: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         max_probs, targets_u = torch.max(softmax_outputs, dim=-1)
-        raw_entropy = entropy(torch.as_tensor(softmax_outputs, dtype=torch.float64))
+        raw_entropy = entropy(softmax_outputs)
         certainty = 1 / (1 + raw_entropy)
         return certainty, targets_u
 
@@ -80,7 +81,7 @@ class BALDCertainty(AbstractStrategy):
 
     def get_certainty_and_label(self, softmax_outputs: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         max_probs, targets_u = torch.max(torch.mean(softmax_outputs, dim=0), dim=-1)
-        mut_inf = mutual_information(torch.as_tensor(softmax_outputs, dtype=torch.float64))
+        mut_inf = mutual_information(softmax_outputs)
         certainty = 1 / (1 + mut_inf)
         return certainty, targets_u
 
@@ -88,9 +89,9 @@ class BALDCertainty(AbstractStrategy):
 class PECertainty(AbstractStrategy):
     def get_certainty_and_label(self, softmax_outputs: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         mean = torch.mean(softmax_outputs, dim=0)
-        max_probs, targets_u = torch.max(torch.mean(softmax_outputs, dim=0), dim=-1)
+        max_probs, targets_u = torch.max(mean, dim=-1)
 
-        mean_entropy = entropy(torch.as_tensor(mean, dtype=torch.float64)).to(softmax_outputs.device)
+        mean_entropy = entropy(mean)
         certainty = 1 / (1 + mean_entropy)
         return certainty, targets_u
 
