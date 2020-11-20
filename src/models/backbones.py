@@ -12,15 +12,15 @@ logger = logging.getLogger(__name__)
 # Credits to https://github.com/kekmodel/FixMatch-pytorch/blob/master/models/wideresnet.py
 
 
-class PSBatchNorm2d(nn.BatchNorm2d):
-    """How Does BN Increase Collapsed Neural Network Filters? (https://arxiv.org/abs/2001.11216)"""
-
-    def __init__(self, num_features, alpha=0.1, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True):
-        super().__init__(num_features, eps, momentum, affine, track_running_stats)
-        self.alpha = alpha
-
-    def forward(self, x):
-        return super().forward(x) + self.alpha
+# class PSBatchNorm2d(nn.BatchNorm2d):
+#     """How Does BN Increase Collapsed Neural Network Filters? (https://arxiv.org/abs/2001.11216)"""
+#
+#     def __init__(self, num_features, alpha=0.1, eps=1e-05, momentum=0.001, affine=True, track_running_stats=True):
+#         super().__init__(num_features, eps, momentum, affine, track_running_stats)
+#         self.alpha = alpha
+#
+#     def forward(self, x):
+#         return super().forward(x) + self.alpha
 
 
 class BasicBlock(nn.Module):
@@ -35,9 +35,9 @@ class BasicBlock(nn.Module):
                                           bias=False)
             self.conv2 = WeightDropConv2d(weight_dropout, out_planes, out_planes, kernel_size=3, stride=1, padding=1, bias=False)
 
-        self.bn1 = PSBatchNorm2d(in_planes, momentum=0.001)
+        self.bn1 = nn.BatchNorm2d(in_planes, momentum=0.001)
         self.relu1 = nn.LeakyReLU(negative_slope=0.1, inplace=True)
-        self.bn2 = PSBatchNorm2d(out_planes, momentum=0.001)
+        self.bn2 = nn.BatchNorm2d(out_planes, momentum=0.001)
         self.relu2 = nn.LeakyReLU(negative_slope=0.1, inplace=True)
         self.drop_rate = drop_rate
         self.equalInOut = (in_planes == out_planes)
@@ -96,7 +96,7 @@ class WideResNet(nn.Module):
         # 3rd block
         self.block3 = NetworkBlock(n, channels[2], channels[3], block, 2, drop_rate, weight_dropout, dropout_method)
         # global average pooling and classifier
-        self.bn1 = PSBatchNorm2d(channels[3], momentum=0.001)
+        self.bn1 = nn.BatchNorm2d(channels[3], momentum=0.001)
         self.relu = nn.LeakyReLU(negative_slope=0.1, inplace=True)
         if weight_dropout == 0.0:
             self.fc = nn.Linear(channels[3], num_classes)
@@ -108,7 +108,7 @@ class WideResNet(nn.Module):
         for m in self.modules():
             if isinstance(m, nn.Conv2d) or isinstance(m, WeightDropConv2d):
                 nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='leaky_relu')
-            elif isinstance(m, PSBatchNorm2d):
+            elif isinstance(m, nn.BatchNorm2d):
                 nn.init.constant_(m.weight, 1.0)
                 nn.init.constant_(m.bias, 0.0)
             elif isinstance(m, nn.Linear) or isinstance(m, WeightDropLinear):
@@ -126,3 +126,13 @@ class WideResNet(nn.Module):
         if self.after_bn_drop_rate > 0.0:
             out = F.dropout(out, p=self.after_bn_drop_rate, training=self.training)
         return self.fc(out)
+
+    def disable_batch_norm_update(self):
+        for m in self.modules():
+            if isinstance(m, nn.BatchNorm2d):
+                m.eval()
+
+    def enable_batch_norm_update(self):
+        for m in self.modules():
+            if isinstance(m, nn.BatchNorm2d):
+                m.train()

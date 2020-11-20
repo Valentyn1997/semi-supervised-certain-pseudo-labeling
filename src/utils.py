@@ -27,11 +27,12 @@ class CustomModelCheckpoint(ModelCheckpoint):
     # modify saving
     def _save_model(self, filepath, trainer, pl_module):
         self.model.best_model = deepcopy(self.model.ema_model)
+        self.model.best_model.eval()
         if self.model.hparams.exp.logging:
-            self.model.trainer.logger.log_metrics({'best_epoch': self.model.trainer.current_epoch + 1},
+            self.model.trainer.logger.log_metrics({'best_epoch': self.model.trainer.current_epoch},
                                                   step=self.model.trainer.global_step)
 
 
-def simple_accuracy(logits, labels):
-    preds = np.argmax(logits, axis=1)
-    return (preds == labels).mean()
+def simple_accuracy(logits: torch.Tensor, labels: torch.Tensor):
+    _, preds = torch.max(logits, dim=-1)
+    return (preds == labels).float().mean()

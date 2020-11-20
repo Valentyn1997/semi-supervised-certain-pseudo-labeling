@@ -4,9 +4,9 @@ model: # Model params
   threshold: 0.95
   lambda_u: 1.0
   ema_decay: 0.9
-  T: 100
+  T: 50
   certainty_strategy: SoftMax #  SoftMax / MeanSoftmax / PECertainty / BALDCertainty / Margin / Entropy
-  multi_strategy: False  # If True - all strategies' statistics are logged, decision is made with certainty_strategy
+  multi_strategy: True  # If True - all strategies' statistics are logged, decision is made with certainty_strategy
   drop_type: Dropout  # Dropout / DropConnect / AlphaDropout / AfterBNDropout / UniformDropout
   drop_rate: 0.0
 
@@ -15,6 +15,7 @@ data:
   source: ???   #  CIFAR10 / CIFAR100 / SVHN / STL10
   n_labelled: ???    # Number of labelled images to use from train, all the other images become unlabelled
   val_ratio: 0.1  # The size of the validation set based on the train-set
+  steps_per_epoch: 1024  # Data steps per epoch: min (between lab and unlab dataloaders) / max (between lab and unlab dataloaders) / x (int)
   batch_size:  # Batch size per GPU/CPU for training
     train: 64
     val: 64
@@ -25,28 +26,29 @@ data:
 
 # Experiment
 exp:
-  check_val_every_n_epoch: 10   # Evaluate validation subset n-th epoch
+  check_val_every_n_epoch: 1   # Evaluate validation subset n-th epoch
   logging: True   # Logging to MlFlow
   mlflow_uri: http://127.0.0.1:5004
   log_artifacts: False  # Logging the artifacts, e.g. images
   log_ul_statistics: image  # Logging the statistics about unlabelled data: batch / image / False
-  log_ul_statistics_freq: 250  # CSV-files saving frequency
-  max_epochs: 10000  # Total number of training epochs to perform.
+  log_ul_statistics_freq: 10  # CSV-files saving frequency
+  max_epochs: 1024  # Total number of training epochs to perform.
   early_stopping: False
   early_stopping_patience: 100  #  Number of epochs to wait for early stopping, used if early_stopping is True
   seed: 42  # random seed for initialization
   checkpoint: True  # Saving best model in RAM and then using it for test
   gpus: '-1'
   drop_last_batch: True  # Ignoring the last not full batch while training
+  precision: 16  # 16 / 32
 
 # Optimizer
 optimizer:
   momentum: 0.9
   nesterov: True
   weight_decay: ???  # Dataset-specific parameter - look to the paper for the specific value
-  weight_decay_time: after  # Perform weight decay 'after' or 'before' EMA update
   lr: 0.03  # The initial learning rate for Adam
   auto_lr_find: False  # Auto lr-finding before training
+  warmup_steps: 0  # Warm-up steps for Cosine LR scheduler
 
 # Hydra defaults
 defaults:

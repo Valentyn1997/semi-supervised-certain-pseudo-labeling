@@ -41,15 +41,16 @@ class SLLDatasetsCollection:
             self.test_dataset = self.Dataset(root=self.dataset_path, split='test', download=True)
 
         self.train_dataset, self.val_dataset = self.split_train_val(self.train_dataset, val_ratio, random_state)
-        self.train_l_dataset, self.train_ul_dataset = self.remove_labels_and_split(self.train_dataset, n_labelled, shuffle=False)
+        self.train_l_dataset, self.train_ul_dataset = self.remove_labels_and_split(self.train_dataset, n_labelled, shuffle=True)
         self.classes = self.test_dataset.classes
 
         # Setting transforms
         self.train_dataset.transform = test_transform
         self.train_l_dataset.transform = train_l_transform
         self.train_ul_dataset.transform = train_ul_transform
-        self.val_dataset.transform = test_transform
         self.test_dataset.transform = test_transform
+        if val_ratio > 0.0:
+            self.val_dataset.transform = test_transform
 
     @staticmethod
     def split_train_val(dataset: VisionDataset, val_ratio: float, random_state: int):
@@ -62,16 +63,19 @@ class SLLDatasetsCollection:
         labels = np.array(getattr(dataset, labels_attr))
 
         train_set = deepcopy(dataset)
-        val_set = deepcopy(dataset)
 
-        splitter = StratifiedShuffleSplit(n_splits=1, test_size=val_ratio, random_state=random_state)
-        for train_index, val_index in splitter.split(dataset.data, labels):
-            train_set.data = dataset.data[train_index]
-            setattr(train_set, labels_attr, labels[train_index])
-            val_set.data = dataset.data[val_index]
-            setattr(val_set, labels_attr, labels[val_index])
+        if val_ratio > 0.0:
+            val_set = deepcopy(dataset)
+            splitter = StratifiedShuffleSplit(n_splits=1, test_size=val_ratio, random_state=random_state)
+            for train_index, val_index in splitter.split(dataset.data, labels):
+                train_set.data = dataset.data[train_index]
+                setattr(train_set, labels_attr, labels[train_index])
+                val_set.data = dataset.data[val_index]
+                setattr(val_set, labels_attr, labels[val_index])
 
-        return train_set, val_set
+            return train_set, val_set
+        else:
+            return train_set, None
 
     @staticmethod
     def remove_labels_and_split(dataset: VisionDataset, n_labels_to_leave: int, shuffle=False):
@@ -121,14 +125,17 @@ class SLLDatasetsCollection:
 
 class FixMatchCompositeTrainDataset(VisionDataset):
     """Wrapper, to generate composite item (labelled, unlabelled)"""
-    def __init__(self, l_dataset: VisionDataset, ul_dataset: VisionDataset, mu: int, len_mode='min'):
+    def __init__(self, l_dataset: VisionDataset, ul_dataset: VisionDataset, mu: int, size='max'):
         self.l_dataset = l_dataset
         self.ul_dataset = ul_dataset
         self.mu = mu
 
         self.l_indexes = []
         self.ul_indexes = []
-        self.len = eval(len_mode)(len(self.l_dataset), len(self.ul_dataset) // self.mu)
+        if isinstance(size, int):
+            self.len = size
+        else:
+            self.len = eval(size)(len(self.l_dataset), len(self.ul_dataset) // self.mu)
         self.construct_indices()
 
     def __getitem__(self, i):

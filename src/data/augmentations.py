@@ -218,6 +218,10 @@ class BasicTransformation(object):
 
         if source in ['MNIST', 'dSprites', 'Fashion-MNIST', 'EMNIST', 'PhotoTour']:
             normalize = [(0.5,), (0.5,)]
+        elif source == 'CIFAR10':
+            normalize = [(0.4914, 0.4822, 0.4465), (0.2471, 0.2435, 0.2616)]
+        elif source == 'CIFAR100':
+            normalize = [(0.5071, 0.4867, 0.4408), (0.2675, 0.2565, 0.2761)]
         else:
             normalize = [(0.5, 0.5, 0.5), (0.5, 0.5, 0.5)]
         self.basic.append(transforms.Normalize(*normalize))
@@ -226,18 +230,6 @@ class BasicTransformation(object):
 
     def __call__(self, inp):
         return self.basic(inp)
-
-
-class StrongAugment(object):
-    def __init__(self, basic_transform: BasicTransformation):
-        self.strong = []
-        self.strong.append(RandAugment(n=2, m=10))
-        self.strong.append(basic_transform)
-
-        self.strong = transforms.Compose(self.strong)
-
-    def __call__(self, inp):
-        return self.strong(inp)
 
 
 def pad(x, border=4):
@@ -283,14 +275,11 @@ class RandomPadandCrop(object):
 
 
 class WeakAugment(object):
-    def __init__(self, basic_transform: BasicTransformation, flip=None, random_resize_crop=None, random_pad_and_crop=None):
+    def __init__(self, basic_transform: BasicTransformation, flip=True, random_pad_and_crop=True):
         self.weak = []
 
-        if random_resize_crop:
-            self.weak.append(transforms.RandomResizedCrop(eval(random_resize_crop['size']), eval(random_resize_crop['scale'])))
-
         if random_pad_and_crop:
-            self.weak.append(RandomPadandCrop())
+            self.weak.append(transforms.RandomCrop(size=32, padding=int(32 * 0.125), padding_mode='reflect'))
 
         if flip:
             self.weak.append(transforms.RandomHorizontalFlip())
@@ -300,6 +289,20 @@ class WeakAugment(object):
 
     def __call__(self, inp):
         return self.weak(inp)
+
+
+class StrongAugment(object):
+    def __init__(self, basic_transform: BasicTransformation, also_weak=True):
+        self.strong = []
+        if also_weak:
+            self.strong.append(transforms.RandomCrop(size=32, padding=int(32 * 0.125), padding_mode='reflect'))
+            self.strong.append(transforms.RandomHorizontalFlip())
+        self.strong.append(RandAugment(n=2, m=10))
+        self.strong.append(basic_transform)
+        self.strong = transforms.Compose(self.strong)
+
+    def __call__(self, inp):
+        return self.strong(inp)
 
 
 class WeakStrongAugment(object):
