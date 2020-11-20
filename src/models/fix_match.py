@@ -173,7 +173,7 @@ class FixMatch(LightningModule):
         result.log('train_loss', loss, on_epoch=True, on_step=False, sync_dist=True)
         result.log('train_loss_l', l_loss, on_epoch=True, on_step=False, sync_dist=True)
         result.log('train_loss_ul', u_loss, on_epoch=True, on_step=False, sync_dist=True)
-
+        result.log('train_mean_mask', mask.mean(), on_epoch=True, on_step=False, sync_dist=True)
         return result
 
     def validation_step(self, batch, batch_ind):
@@ -277,5 +277,5 @@ class MultiStrategyFixMatch(FixMatch):
         result.log('train_loss', loss, on_epoch=True, on_step=False, sync_dist=True)
         result.log('train_loss_l', l_loss, on_epoch=True, on_step=False, sync_dist=True)
         result.log('train_loss_ul', u_loss, on_epoch=True, on_step=False, sync_dist=True)
-
+        result.log('train_mean_mask', mask.mean(), on_epoch=True, on_step=False, sync_dist=True)
         return result
