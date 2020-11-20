@@ -10,13 +10,9 @@ def entropy(data: torch.Tensor) -> torch.Tensor:
     return -torch.sum(data * torch.log(data + epsilon), dim=-1)
 
 
-def mutual_information(data: torch.Tensor) -> torch.Tensor:
-    epsilon = torch.as_tensor(sys.float_info.min, dtype=torch.float64)
-    mi = entropy(
-        torch.as_tensor(
-            torch.mean(data, dim=0) - torch.mean(torch.sum(-data * torch.log(data + epsilon), dim=-1), dim=0),
-            dtype=torch.float64)
-    )
+def mutual_information(logits: torch.Tensor) -> torch.Tensor:
+    epsilon = sys.float_info.min
+    mi = entropy(logits.mean(0)) - torch.mean(torch.sum(-logits * torch.log(logits + epsilon), -1), 0)
     return mi
 
 

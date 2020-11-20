@@ -13,7 +13,7 @@ python-dotenv>=0.5.1
 hydra-core
 hydra_colorlog
 mlflow
-torch
+torch>=1.6
 pytorch-lightning==0.9.0
 torchvision
 baal

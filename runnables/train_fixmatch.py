@@ -6,6 +6,7 @@ from omegaconf import DictConfig
 from pytorch_lightning import Trainer
 from pytorch_lightning.loggers import MLFlowLogger
 from pytorch_lightning.callbacks.early_stopping import EarlyStopping
+from pytorch_lightning.callbacks.lr_logger import LearningRateLogger
 
 from src import CONFIG_PATH, GLOBAL_ARTIFACTS_PATH
 from src.utils import set_seed, CustomModelCheckpoint
@@ -52,10 +53,11 @@ def main(args: DictConfig):
     model_class = MultiStrategyFixMatch if args.model.multi_strategy else FixMatch
     model = model_class(args, datasets_collection, artifacts_path=artifacts_path)
 
-    # Early stopping & Checkpointing
+    # Early stopping & Checkpointing & LR-logging
     early_stop_callback = EarlyStopping(monitor='val_loss', min_delta=0.00, patience=args.exp.early_stopping_patience,
                                         verbose=False, mode='min')
     checkpoint_callback = CustomModelCheckpoint(model=model, verbose=True, monitor='val_loss', mode='min', save_top_k=1)
+    lr_logging_callback = LearningRateLogger(logging_interval='epoch')
 
     logger.info(f'Run arguments: \n{args.pretty()}')
 
@@ -68,7 +70,10 @@ def main(args: DictConfig):
                       auto_lr_find=args.optimizer.auto_lr_find,
                       distributed_backend='dp',
                       row_log_interval=1,
-                      check_val_every_n_epoch=args.exp.check_val_every_n_epoch)
+                      profiler=True,
+                      precision=args.exp.precision,
+                      check_val_every_n_epoch=args.exp.check_val_every_n_epoch,
+                      callbacks=[lr_logging_callback])
     trainer.fit(model)
     trainer.test(model)
 

@@ -15,9 +15,9 @@ class WeightDropConv2d(nn.Conv2d):
         self.weight_dropout = weight_dropout
 
     def forward(self, input: torch.Tensor) -> torch.Tensor:
-        dropped_weight = torch.nn.functional.dropout(self.weight, p=self.weight_dropout, training=True)
+        dropped_weight = torch.nn.functional.dropout(self.weight, p=self.weight_dropout, training=self.training)
         if self.bias is not None:
-            dropped_bias = torch.nn.functional.dropout(self.bias, p=self.weight_dropout, training=True)
+            dropped_bias = torch.nn.functional.dropout(self.bias, p=self.weight_dropout, training=self.training)
             return self._conv_forward(input, dropped_weight, dropped_bias)
         else:
             return self._conv_forward(input, dropped_weight, self.bias)
@@ -39,8 +39,8 @@ class WeightDropLinear(nn.Linear):
         self.weight_dropout = weight_dropout
 
     def forward(self, input: torch.Tensor) -> torch.Tensor:
-        dropped_weight = torch.nn.functional.dropout(self.weight, p=self.weight_dropout, training=True)
-        dropped_bias = torch.nn.functional.dropout(self.bias, p=self.weight_dropout, training=True)
+        dropped_weight = torch.nn.functional.dropout(self.weight, p=self.weight_dropout, training=self.training)
+        dropped_bias = torch.nn.functional.dropout(self.bias, p=self.weight_dropout, training=self.training)
         return F.linear(input, dropped_weight, dropped_bias)
 
 
