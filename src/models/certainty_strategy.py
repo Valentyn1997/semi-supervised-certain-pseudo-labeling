@@ -4,16 +4,24 @@ from typing import Tuple
 import torch
 
 
-def entropy(logits: torch.Tensor) -> torch.Tensor:
-    _log = torch.log(logits)
-    _log[_log == float('-inf')] = 0  # set -inf value to 0 as they should add zero information to entropy anyways
-    return -torch.sum(logits * _log, dim=-1)
+def entropy_log(values: torch.Tensor) -> torch.Tensor:
+    """
+    Calculate log of pytorch tensor used for entropy calculation.
+    0 results in 0 as they add zero information to entropy.
+    :param values: input values.
+    :return: prepared log of values.
+    """
+    _log = torch.log(values)
+    mask = torch.isinf(_log)
+    return _log.masked_fill(mask, 0)
 
 
-def mutual_information(logits: torch.Tensor) -> torch.Tensor:
-    _log = torch.log(logits)
-    _log[_log == float('-inf')] = 0
-    mi = entropy(logits.mean(0)) - torch.mean(torch.sum(-logits * _log, -1), 0)
+def entropy(values: torch.Tensor) -> torch.Tensor:
+    return -torch.sum(values * entropy_log(values), dim=-1)
+
+
+def mutual_information(values: torch.Tensor) -> torch.Tensor:
+    mi = entropy(values.mean(0)) - torch.mean(torch.sum(-values * entropy_log(values), -1), 0)
     return mi
 
 
