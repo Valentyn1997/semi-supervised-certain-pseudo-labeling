@@ -3,7 +3,7 @@ model: # Model params
   mu: 7  #
   threshold: 0.95
   choose_threshold_on_val: False
-  choose_threshold_on_val_freq: 100  # n data-steps, after which threshold will be updated
+  choose_threshold_on_val_freq: 128  # n data-steps, after which threshold will be updated
   choose_threshold_on_val_acc: 0.95  # Choosing threshold, which guarantees this accuracy
   lambda_u: 1.0
   ema_decay: 0.9
