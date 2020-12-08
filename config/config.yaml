@@ -2,6 +2,9 @@
 model: # Model params
   mu: 7  #
   threshold: 0.95
+  choose_threshold_on_val: True
+  choose_threshold_on_val_freq: 100  # n data-steps, after which threshold will be updated
+  choose_threshold_on_val_acc: 0.95  # Choosing threshold, which guarantees this accuracy
   lambda_u: 1.0
   ema_decay: 0.9
   T: 50
@@ -31,7 +34,8 @@ exp:
   mlflow_uri: http://127.0.0.1:5004
   log_artifacts: False  # Logging the artifacts, e.g. images
   log_ul_statistics: image  # Logging the statistics about unlabelled data: batch / image / False
-  log_ul_statistics_freq: 10  # CSV-files saving frequency
+  log_val_statistics: image  # Logging the statistics about val data: batch / image / False
+  log_statistics_freq: 10  # CSV-files saving frequency
   max_epochs: 1024  # Total number of training epochs to perform.
   early_stopping: False
   early_stopping_patience: 100  #  Number of epochs to wait for early stopping, used if early_stopping is True

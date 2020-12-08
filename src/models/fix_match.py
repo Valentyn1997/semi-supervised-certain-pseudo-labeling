@@ -9,6 +9,7 @@ from torch.optim import SGD
 from torch.utils.data import DataLoader
 from copy import deepcopy
 from pytorch_lightning.core.step_result import TrainResult, EvalResult
+import pandas as pd
 
 from src.models.dropouts import uniform_dropout
 from src.models.certainty_strategy import AbstractStrategy
@@ -49,8 +50,13 @@ class FixMatch(LightningModule):
         self.best_model = self.ema_model  # Placeholder for checkpointing
         self.ema_optimizer = WeightEMA(self.model, self.ema_model, alpha=self.hparams.model.ema_decay)
         self.ul_logger = UnlabelledStatisticsLogger(level=self.hparams.exp.log_ul_statistics,
-                                                    save_frequency=self.hparams.exp.log_ul_statistics_freq,
-                                                    artifacts_path=self.artifacts_path)
+                                                    save_frequency=self.hparams.exp.log_statistics_freq,
+                                                    artifacts_path=self.artifacts_path,
+                                                    name='unlabelled')
+        self.val_logger = UnlabelledStatisticsLogger(level=self.hparams.exp.log_val_statistics,
+                                                     save_frequency=self.hparams.exp.log_statistics_freq,
+                                                     artifacts_path=self.artifacts_path,
+                                                     name='val')
 
         # Initialisation of certainty strategy
         strategy_class_name = self.hparams.model.certainty_strategy
@@ -59,11 +65,17 @@ class FixMatch(LightningModule):
         assert isinstance(strategy, AbstractStrategy)
         self.strategy = strategy
 
+        # Setting initial threshold to 1.0, if choose_threshold_on_val
+        if self.hparams.model.choose_threshold_on_val:
+            self.hparams.model.threshold = 1.0
+
+
     def prepare_data(self):
         self.train_dataset = FixMatchCompositeTrainDataset(self.datasets_collection.train_l_dataset,
                                                            self.datasets_collection.train_ul_dataset,
                                                            self.hparams.model.mu,
-                                                           self.hparams.data.steps_per_epoch * self.hparams.data.batch_size.train)
+                                                           self.hparams.data.steps_per_epoch * self.hparams.data.batch_size.train,
+                                                           self.datasets_collection.val_dataset)
         if self.hparams.data.val_ratio > 0.0:
             self.val_dataset = self.datasets_collection.val_dataset
         else:
@@ -131,10 +143,15 @@ class FixMatch(LightningModule):
         uw_images = torch.cat([item[0][0] for item in composite_batch[1]])
         us_images = torch.cat([item[0][1] for item in composite_batch[1]])
 
-        return l_targets, l_images, u_targets, u_ids, uw_images, us_images
+        v_targets = composite_batch[2][0][1]
+        v_images = composite_batch[2][0][0]
+        v_ids = composite_batch[2][0][2]
+
+        return l_targets, l_images, u_targets, u_ids, uw_images, us_images, v_targets, v_images, v_ids
 
     def training_step(self, composite_batch, batch_ind):
-        l_targets, l_images, u_targets, u_ids, uw_images, us_images = self._split_batch(composite_batch)
+        l_targets, l_images, u_targets, u_ids, uw_images, us_images, v_targets, v_images, v_ids \
+            = self._split_batch(composite_batch)
 
         inputs = torch.cat((l_images, us_images, uw_images)).type_as(l_images)
         logits = self(inputs)  # !!! IMPORTANT FOR SIMULTANEOUS BATCHNORM UPDATE !!!
@@ -148,20 +165,35 @@ class FixMatch(LightningModule):
         us_logits, uw_logits = logits[batch_size:].chunk(2)
         uw_logits = uw_logits.detach()
         with torch.no_grad():
+            # Unlabelled batch
             if self.strategy.is_ensemble:
                 self.model.disable_batch_norm_update()
                 uw_logits_list = [self(uw_images).detach() for _ in range(self.hparams.model.T - 1)]  # First pass already done
                 uw_logits = torch.stack(uw_logits_list + [uw_logits])
-                self.model.enable_batch_norm_update()
                 assert not (uw_logits[0] == uw_logits[1]).all()  # Checking if logits are actually different
+                self.model.enable_batch_norm_update()
 
         # get the value of the max, and the index (between 1 and 10 for CIFAR10 for example)
         uw_pseudo_soft_targets = torch.softmax(uw_logits, dim=-1)
         u_scores, u_pseudo_targets = self.strategy.get_certainty_and_label(softmax_outputs=uw_pseudo_soft_targets)
         assert not any(torch.isnan(u_scores))
 
-        # Unlabelled statistics
+        # Validation logging
+        with torch.no_grad():
+            self.model.disable_batch_norm_update()
+            if self.strategy.is_ensemble:
+                v_logits_list = [self(v_images).detach() for _ in range(self.hparams.model.T)]
+                v_logits = torch.stack(v_logits_list)
+            else:
+                v_logits = self(v_images).detach()
+            self.model.enable_batch_norm_update()
+        v_pseudo_soft_targets = torch.softmax(v_logits, dim=-1)
+        v_scores, v_pseudo_targets = self.strategy.get_certainty_and_label(softmax_outputs=v_pseudo_soft_targets)
+
+        # Statistics logging
         self.ul_logger.log_statistics(u_scores, u_targets, u_pseudo_targets, u_ids, current_epoch=self.trainer.current_epoch)
+        self.val_logger.log_statistics(v_scores, v_targets, v_pseudo_targets, v_ids, current_epoch=self.trainer.current_epoch,
+                                       current_globalstep=self.trainer.global_step)
 
         mask = u_scores.ge(self.hparams.model.threshold).float()
         u_loss = (F.cross_entropy(us_logits, u_pseudo_targets, reduction='none') * mask).mean()
@@ -198,8 +230,19 @@ class FixMatch(LightningModule):
     def calculate_metrics(logits, targets, prefix):
         return {prefix + '_acc': simple_accuracy(logits, targets)}
 
+    def on_train_batch_end(self, batch, batch_idx, dataloader_idx) -> None:
+        if self.hparams.model.choose_threshold_on_val and \
+                (self.trainer.global_step + 1) % self.hparams.model.choose_threshold_on_val_freq == 0:
+            self.hparams.model.threshold = self.val_logger.get_optimal_threshold(self.hparams.model.choose_threshold_on_val_freq,
+                                                                                 accuracy=self.hparams.model.choose_threshold_on_val_acc)
+
+            if self.hparams.exp.logging:
+                self.trainer.logger.log_metrics({'threshold': self.hparams.model.threshold}, step=self.trainer.global_step)
+
+
     def on_epoch_end(self) -> None:
         self.ul_logger.on_epoch_end(current_epoch=self.trainer.current_epoch + 1)
+        self.val_logger.on_epoch_end(current_epoch=self.trainer.current_epoch + 1)
 
     def on_train_start(self) -> None:
         if self.hparams.exp.log_artifacts:  # Plotting one batch of images
@@ -231,8 +274,19 @@ class MultiStrategyFixMatch(FixMatch):
         self.decision_strategy = self.strategy.__class__.__name__
         self.strategy = MultiStrategies()
 
+    def on_train_batch_end(self, batch, batch_idx, dataloader_idx) -> None:
+        if self.hparams.model.choose_threshold_on_val and \
+                (self.trainer.global_step + 1) % self.hparams.model.choose_threshold_on_val_freq == 0:
+            self.hparams.model.threshold = self.val_logger.get_optimal_threshold(self.hparams.model.choose_threshold_on_val_freq,
+                                                                                 strategy_name=self.decision_strategy,
+                                                                                 accuracy=self.hparams.model.choose_threshold_on_val_acc)
+
+            if self.hparams.exp.logging:
+                self.trainer.logger.log_metrics({'threshold': self.hparams.model.threshold}, step=self.trainer.global_step)
+
     def training_step(self, composite_batch, batch_ind):
-        l_targets, l_images, u_targets, u_ids, uw_images, us_images = self._split_batch(composite_batch)
+        l_targets, l_images, u_targets, u_ids, uw_images, us_images, v_targets, v_images, v_ids \
+            = self._split_batch(composite_batch)
 
         inputs = torch.cat((l_images, us_images, uw_images)).type_as(l_images)
         logits = self(inputs)  # !!! IMPORTANT FOR SIMULTANEOUS BATCHNORM UPDATE !!!
@@ -250,6 +304,11 @@ class MultiStrategyFixMatch(FixMatch):
             self.model.disable_batch_norm_update()
             uw_logits_list = [self(uw_images).detach() for _ in range(self.hparams.model.T - 1)]
             uw_logits_ensemble = torch.stack(uw_logits_list + [uw_logits])
+
+            v_logits = self(v_images).detach()
+            v_logits_list = [self(v_images).detach() for _ in range(self.hparams.model.T)]
+            v_logits_ensemble = torch.stack(v_logits_list)
+
             self.model.enable_batch_norm_update()
             assert not (uw_logits_ensemble[0] == uw_logits_ensemble[1]).all()  # Checking if logits are actually different
 
@@ -257,14 +316,21 @@ class MultiStrategyFixMatch(FixMatch):
 
             if self.strategy.strategies[strategy_name].is_ensemble:
                 uw_pseudo_soft_targets = torch.softmax(uw_logits_ensemble, dim=-1)
+                v_pseudo_soft_targets = torch.softmax(v_logits_ensemble, dim=-1)
             else:
                 uw_pseudo_soft_targets = torch.softmax(uw_logits, dim=-1)
+                v_pseudo_soft_targets = torch.softmax(v_logits, dim=-1)
 
             u_scores, u_pseudo_targets = self.strategy.get_certainty_and_label(uw_pseudo_soft_targets, strategy_name)
+            v_scores, v_pseudo_targets = self.strategy.get_certainty_and_label(v_pseudo_soft_targets, strategy_name)
             # Unlabelled statistics
             self.ul_logger.log_statistics(u_scores, u_targets, u_pseudo_targets, u_ids,
                                           current_epoch=self.trainer.current_epoch,
                                           strategy_name=strategy_name)
+            self.val_logger.log_statistics(v_scores, v_targets, v_pseudo_targets, v_ids,
+                                           current_epoch=self.trainer.current_epoch,
+                                           strategy_name=strategy_name,
+                                           current_globalstep=self.trainer.global_step)
 
             if strategy_name == self.decision_strategy:
                 mask = u_scores.ge(self.hparams.model.threshold).float()
