@@ -114,21 +114,15 @@ class UnlabelledStatisticsLogger:
         # Taking the q quantile of scores of correct labels
         logging_df = logging_df.sort_values(by='score', ascending=False)
         opt_threshold = 1.0
-        best_split_accuracy = 0.0
         for threshold in logging_df.score.unique():
-            split_accuracy = np.concatenate([logging_df[logging_df.score < threshold].correctness == 0,
-                               logging_df[logging_df.score >= threshold].correctness == 1]).mean()
+            accuracy_for_threshold = logging_df[logging_df.score >= threshold].correctness.mean()
 
-            if split_accuracy >= best_split_accuracy:
-                best_split_accuracy = split_accuracy
-
-                if split_accuracy >= accuracy:
-                    opt_threshold = threshold
+            if accuracy_for_threshold >= accuracy:
+                opt_threshold = threshold
             else:
                 return opt_threshold
 
         return opt_threshold
-
 
 
 def get_cosine_schedule_with_warmup(optimizer,
