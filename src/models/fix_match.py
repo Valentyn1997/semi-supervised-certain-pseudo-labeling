@@ -49,10 +49,14 @@ class FixMatch(LightningModule):
         self.ema_model = deepcopy(self.model)
         self.best_model = self.ema_model  # Placeholder for checkpointing
         self.ema_optimizer = WeightEMA(self.model, self.ema_model, alpha=self.hparams.model.ema_decay)
-        self.ul_logger = UnlabelledStatisticsLogger(level=self.hparams.exp.log_ul_statistics,
-                                                    save_frequency=self.hparams.exp.log_statistics_freq,
-                                                    artifacts_path=self.artifacts_path,
-                                                    name='unlabelled')
+        self.ul_w_logger = UnlabelledStatisticsLogger(level=self.hparams.exp.log_ul_w_statistics,
+                                                      save_frequency=self.hparams.exp.log_statistics_freq,
+                                                      artifacts_path=self.artifacts_path,
+                                                      name='unlabelled_weak')
+        self.ul_s_logger = UnlabelledStatisticsLogger(level=self.hparams.exp.log_ul_s_statistics,
+                                                      save_frequency=self.hparams.exp.log_statistics_freq,
+                                                      artifacts_path=self.artifacts_path,
+                                                      name='unlabelled_strong')
         self.val_logger = UnlabelledStatisticsLogger(level=self.hparams.exp.log_val_statistics,
                                                      save_frequency=self.hparams.exp.log_statistics_freq,
                                                      artifacts_path=self.artifacts_path,
@@ -178,20 +182,31 @@ class FixMatch(LightningModule):
         u_scores, u_pseudo_targets = self.strategy.get_certainty_and_label(softmax_outputs=uw_pseudo_soft_targets)
         assert not any(torch.isnan(u_scores))
 
-        # Validation logging
+        # Validation / strongly augmented logging
         with torch.no_grad():
             self.model.disable_batch_norm_update()
             if self.strategy.is_ensemble:
                 v_logits_list = [self(v_images).detach() for _ in range(self.hparams.model.T)]
                 v_logits = torch.stack(v_logits_list)
+
+                us_logits_list = [self(us_images).detach() for _ in range(self.hparams.model.T)]
+                us_logits_ = torch.stack(us_logits_list)
+
             else:
                 v_logits = self(v_images).detach()
+                us_logits_ = self(us_images).detach()
+
             self.model.enable_batch_norm_update()
+
         v_pseudo_soft_targets = torch.softmax(v_logits, dim=-1)
         v_scores, v_pseudo_targets = self.strategy.get_certainty_and_label(softmax_outputs=v_pseudo_soft_targets)
 
+        us_pseudo_soft_targets = torch.softmax(us_logits_, dim=-1)
+        us_scores, us_pseudo_targets = self.strategy.get_certainty_and_label(softmax_outputs=us_pseudo_soft_targets)
+
         # Statistics logging
-        self.ul_logger.log_statistics(u_scores, u_targets, u_pseudo_targets, u_ids, current_epoch=self.trainer.current_epoch)
+        self.ul_w_logger.log_statistics(u_scores, u_targets, u_pseudo_targets, u_ids, current_epoch=self.trainer.current_epoch)
+        self.ul_s_logger.log_statistics(us_scores, u_targets, us_pseudo_targets, u_ids, current_epoch=self.trainer.current_epoch)
         self.val_logger.log_statistics(v_scores, v_targets, v_pseudo_targets, v_ids, current_epoch=self.trainer.current_epoch,
                                        current_globalstep=self.trainer.global_step)
 
@@ -241,7 +256,8 @@ class FixMatch(LightningModule):
 
 
     def on_epoch_end(self) -> None:
-        self.ul_logger.on_epoch_end(current_epoch=self.trainer.current_epoch + 1)
+        self.ul_w_logger.on_epoch_end(current_epoch=self.trainer.current_epoch + 1)
+        self.ul_s_logger.on_epoch_end(current_epoch=self.trainer.current_epoch + 1)
         self.val_logger.on_epoch_end(current_epoch=self.trainer.current_epoch + 1)
 
     def on_train_start(self) -> None:
@@ -309,6 +325,10 @@ class MultiStrategyFixMatch(FixMatch):
             v_logits_list = [self(v_images).detach() for _ in range(self.hparams.model.T)]
             v_logits_ensemble = torch.stack(v_logits_list)
 
+            us_logits_ = self(us_images).detach()
+            us_logits_list = [self(us_images).detach() for _ in range(self.hparams.model.T)]
+            us_logits_ensemble = torch.stack(us_logits_list)
+
             self.model.enable_batch_norm_update()
             assert not (uw_logits_ensemble[0] == uw_logits_ensemble[1]).all()  # Checking if logits are actually different
 
@@ -316,17 +336,23 @@ class MultiStrategyFixMatch(FixMatch):
 
             if self.strategy.strategies[strategy_name].is_ensemble:
                 uw_pseudo_soft_targets = torch.softmax(uw_logits_ensemble, dim=-1)
+                us_pseudo_soft_targets = torch.softmax(us_logits_ensemble, dim=-1)
                 v_pseudo_soft_targets = torch.softmax(v_logits_ensemble, dim=-1)
             else:
                 uw_pseudo_soft_targets = torch.softmax(uw_logits, dim=-1)
+                us_pseudo_soft_targets = torch.softmax(us_logits_, dim=-1)
                 v_pseudo_soft_targets = torch.softmax(v_logits, dim=-1)
 
             u_scores, u_pseudo_targets = self.strategy.get_certainty_and_label(uw_pseudo_soft_targets, strategy_name)
+            us_scores, us_pseudo_targets = self.strategy.get_certainty_and_label(us_pseudo_soft_targets, strategy_name)
             v_scores, v_pseudo_targets = self.strategy.get_certainty_and_label(v_pseudo_soft_targets, strategy_name)
             # Unlabelled statistics
-            self.ul_logger.log_statistics(u_scores, u_targets, u_pseudo_targets, u_ids,
-                                          current_epoch=self.trainer.current_epoch,
-                                          strategy_name=strategy_name)
+            self.ul_w_logger.log_statistics(u_scores, u_targets, u_pseudo_targets, u_ids,
+                                            current_epoch=self.trainer.current_epoch,
+                                            strategy_name=strategy_name)
+            self.ul_s_logger.log_statistics(us_scores, u_targets, us_pseudo_targets, u_ids,
+                                            current_epoch=self.trainer.current_epoch,
+                                            strategy_name=strategy_name)
             self.val_logger.log_statistics(v_scores, v_targets, v_pseudo_targets, v_ids,
                                            current_epoch=self.trainer.current_epoch,
                                            strategy_name=strategy_name,
