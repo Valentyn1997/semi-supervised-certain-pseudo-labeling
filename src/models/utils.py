@@ -46,12 +46,14 @@ class WeightEMA(object):
 
 class UnlabelledStatisticsLogger:
 
-    def __init__(self, level='image', save_frequency=500, artifacts_path=None):
+    def __init__(self, level='image', save_frequency=500, artifacts_path=None, name='unlabelled'):
         self.level = level
         self.batch_dfs = []
         self.save_frequency = save_frequency
         self.artifacts_path = artifacts_path
         self.logging_df = pd.DataFrame()
+        self.name = name
+        self.strategies = set()
 
     def log_statistics(self,
                        u_scores: torch.tensor,
@@ -59,7 +61,8 @@ class UnlabelledStatisticsLogger:
                        u_pseudo_targets: torch.tensor,
                        u_ids: torch.tensor,
                        current_epoch: int,
-                       strategy_name=None):
+                       strategy_name=None,
+                       current_globalstep: int = None):
         if self.level == 'batch':
             raise NotImplementedError()
             # Needs to be rewriten to consider u_scores
@@ -78,8 +81,11 @@ class UnlabelledStatisticsLogger:
             batch_df['score'] = u_scores.tolist()
             batch_df['correctness'] = (u_pseudo_targets == u_targets).tolist()
             batch_df['epoch'] = current_epoch
+            if current_globalstep is not None:
+                batch_df['datastep'] = current_globalstep
             if strategy_name is not None:
                 batch_df['strategy'] = strategy_name
+                self.strategies.add(strategy_name)
             self.batch_dfs.append(batch_df)
 
     def on_epoch_end(self, current_epoch):
@@ -90,9 +96,39 @@ class UnlabelledStatisticsLogger:
 
         if self.level == 'image' and current_epoch % self.save_frequency == 0:
             epochs_range = self.logging_df['epoch'].min(), self.logging_df['epoch'].max()
-            csv_path = f'{self.artifacts_path}/epochs_{epochs_range[0]:05d}_{epochs_range[1]:05d}.csv'
+            csv_path = f'{self.artifacts_path}/{self.name}_epochs_{epochs_range[0]:05d}_{epochs_range[1]:05d}.csv'
             self.logging_df.to_csv(csv_path, index=False)
             self.logging_df = pd.DataFrame()
+
+    def get_optimal_threshold(self, from_datasteps, accuracy=0.95, strategy_name=None):
+
+        if strategy_name is not None:
+            logging_df = pd.concat(self.batch_dfs[-from_datasteps * len(self.strategies):], ignore_index=True)
+            logging_df = logging_df[logging_df.strategy == strategy_name]
+        else:
+            logging_df = pd.concat(self.batch_dfs[-from_datasteps:], ignore_index=True)
+
+        # Taking only last from_datasteps
+        logging_df = logging_df[logging_df.datastep > (logging_df.datastep.max() - from_datasteps)]
+
+        # Taking the q quantile of scores of correct labels
+        logging_df = logging_df.sort_values(by='score', ascending=False)
+        opt_threshold = 1.0
+        best_split_accuracy = 0.0
+        for threshold in logging_df.score.unique():
+            split_accuracy = np.concatenate([logging_df[logging_df.score < threshold].correctness == 0,
+                               logging_df[logging_df.score >= threshold].correctness == 1]).mean()
+
+            if split_accuracy >= best_split_accuracy:
+                best_split_accuracy = split_accuracy
+
+                if split_accuracy >= accuracy:
+                    opt_threshold = threshold
+            else:
+                return opt_threshold
+
+        return opt_threshold
+
 
 
 def get_cosine_schedule_with_warmup(optimizer,

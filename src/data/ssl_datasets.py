@@ -125,13 +125,16 @@ class SLLDatasetsCollection:
 
 class FixMatchCompositeTrainDataset(VisionDataset):
     """Wrapper, to generate composite item (labelled, unlabelled)"""
-    def __init__(self, l_dataset: VisionDataset, ul_dataset: VisionDataset, mu: int, size='max'):
+    def __init__(self, l_dataset: VisionDataset, ul_dataset: VisionDataset, mu: int, size='max',
+                 val_dataset: VisionDataset = None):
         self.l_dataset = l_dataset
         self.ul_dataset = ul_dataset
+        self.val_dataset = val_dataset
         self.mu = mu
 
         self.l_indexes = []
         self.ul_indexes = []
+        self.val_indexes = []
         if isinstance(size, int):
             self.len = size
         else:
@@ -139,23 +142,38 @@ class FixMatchCompositeTrainDataset(VisionDataset):
         self.construct_indices()
 
     def __getitem__(self, i):
-        return [self.l_dataset[ind] for ind in self.l_indexes[i]], [self.ul_dataset[ind] for ind in self.ul_indexes[i]]
+        if self.val_dataset is not None:
+            return [self.l_dataset[ind] for ind in self.l_indexes[i]], \
+                   [self.ul_dataset[ind] for ind in self.ul_indexes[i]], \
+                   [self.val_dataset[ind] for ind in self.val_indexes[i]]
+        else:
+            return [self.l_dataset[ind] for ind in self.l_indexes[i]], [self.ul_dataset[ind] for ind in self.ul_indexes[i]]
 
     def construct_indices(self):
         l_indices = np.arange(0, len(self.l_dataset))
         ul_indices = np.arange(0, len(self.ul_dataset))
+        if self.val_dataset is not None:
+            val_indices = np.arange(0, len(self.val_dataset))
 
         l_n_repeats = math.ceil(self.len / len(l_indices))
         ul_n_repeats = math.ceil(self.len * self.mu / len(ul_indices))
+        if self.val_dataset is not None:
+            val_n_repeats = math.ceil(self.len / len(val_indices))
 
         l_indices_repeated = np.tile(l_indices, l_n_repeats).reshape(l_n_repeats, l_indices.size)
         ul_indices_repeated = np.tile(ul_indices, ul_n_repeats).reshape(ul_n_repeats, ul_indices.size)
+        if self.val_dataset is not None:
+            val_indices_repeated = np.tile(val_indices, val_n_repeats).reshape(val_n_repeats, val_indices.size)
 
         self.l_indexes = np.array(list(map(np.random.permutation, l_indices_repeated))).flatten()[:self.len]
         self.ul_indexes = np.array(list(map(np.random.permutation, ul_indices_repeated))).flatten()[:self.len * self.mu]
+        if self.val_dataset is not None:
+            self.val_indexes = np.array(list(map(np.random.permutation, val_indices_repeated))).flatten()[:self.len]
 
         self.l_indexes = self.l_indexes.reshape(self.len, 1)
         self.ul_indexes = self.ul_indexes.reshape(self.len, self.mu)
+        if self.val_dataset is not None:
+            self.val_indexes = self.val_indexes.reshape(self.len, 1)
 
     def __len__(self):
         # will be called every epoch
