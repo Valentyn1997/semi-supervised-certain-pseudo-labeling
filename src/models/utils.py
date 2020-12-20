@@ -120,9 +120,9 @@ class UnlabelledStatisticsLogger:
             if accuracy_for_threshold >= accuracy:
                 opt_threshold = threshold
             else:
-                return opt_threshold
+                return float(opt_threshold)
 
-        return opt_threshold
+        return float(opt_threshold)
 
 
 def get_cosine_schedule_with_warmup(optimizer,
