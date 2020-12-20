@@ -12,7 +12,7 @@ from pytorch_lightning.core.step_result import TrainResult, EvalResult
 import pandas as pd
 
 from src.models.dropouts import uniform_dropout
-from src.models.certainty_strategy import AbstractStrategy
+from src.models.certainty_strategy import AbstractStrategy, BALDCertainty
 from src.utils import simple_accuracy
 from src.models.utils import WeightEMA, UnlabelledStatisticsLogger, get_cosine_schedule_with_warmup
 from src.models.backbones import WideResNet
@@ -211,6 +211,11 @@ class FixMatch(LightningModule):
                                        current_globalstep=self.trainer.global_step)
 
         mask = u_scores.ge(self.hparams.model.threshold).float()
+
+        if isinstance(self.strategy, BALDCertainty):
+            conf_scores = self.strategy.get_model_confidence(softmax_outputs=uw_pseudo_soft_targets)
+            conf_mask = conf_scores.ge(self.hparams.model.conf_threshold)
+            mask = torch.logical_and(mask, conf_mask)
         u_loss = (F.cross_entropy(us_logits, u_pseudo_targets, reduction='none') * mask).mean()
 
         # Train loss / labelled accuracy

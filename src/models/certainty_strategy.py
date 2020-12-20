@@ -89,9 +89,12 @@ class BALDCertainty(AbstractStrategy):
 
     def get_certainty_and_label(self, softmax_outputs: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         max_probs, targets_u = torch.max(torch.mean(softmax_outputs, dim=0), dim=-1)
+        return max_probs, targets_u
+
+    def get_model_confidence(self, softmax_outputs: torch.Tensor) -> torch.Tensor:
         mut_inf = mutual_information(softmax_outputs)
-        certainty = 1 / (1 + mut_inf)
-        return certainty, targets_u
+        confidence = 1 / (1 + mut_inf)
+        return confidence
 
 
 class PECertainty(AbstractStrategy):
