@@ -16,6 +16,7 @@ from src.models.certainty_strategy import AbstractStrategy, BALDCertainty
 from src.utils import simple_accuracy
 from src.models.utils import WeightEMA, UnlabelledStatisticsLogger, get_cosine_schedule_with_warmup
 from src.models.backbones import WideResNet
+from src.models.running_gmm import RunningGMM
 from src.models.certainty_strategy import MultiStrategies
 from src.data.ssl_datasets import SLLDatasetsCollection, FixMatchCompositeTrainDataset
 
@@ -78,6 +79,10 @@ class FixMatch(LightningModule):
         if self.hparams.model.choose_threshold_on_val:
             self.hparams.model.threshold = 1.0
 
+        # GMM & Aleatoric uncertainty
+        if self.hparams.model.features_gmm:
+            self.running_gmm = RunningGMM(self.model.channels, len(self.datasets_collection.classes))
+
 
     def prepare_data(self):
         self.train_dataset = FixMatchCompositeTrainDataset(self.datasets_collection.train_l_dataset,
@@ -134,13 +139,20 @@ class FixMatch(LightningModule):
         super().optimizer_step(*args, **kwargs)
         self.ema_optimizer.step()
 
-    def forward(self, batch, model=None):
+    def forward(self, batch, model=None, return_feature_map=False):
         if model is None:
-            return self.model(batch)
+            logits, feature_map = self.model(batch)
         elif model == 'best':
-            return self.best_model(batch)
+            logits, feature_map = self.best_model(batch)
         elif model == 'ema':
-            return self.ema_model(batch)
+            logits, feature_map = self.ema_model(batch)
+        else:
+            raise NotImplementedError()
+
+        if return_feature_map:
+            return logits, feature_map
+        else:
+            return logits
 
     @staticmethod
     def _split_batch(composite_batch):
@@ -166,12 +178,19 @@ class FixMatch(LightningModule):
             = self._split_batch(composite_batch)
 
         inputs = torch.cat((l_images, us_images, uw_images)).type_as(l_images)
-        logits = self(inputs)  # !!! IMPORTANT FOR SIMULTANEOUS BATCHNORM UPDATE !!!
+        logits, feature_map = self(inputs, return_feature_map=True)  # !!! IMPORTANT FOR SIMULTANEOUS BATCHNORM UPDATE !!!
 
         # Supervised loss
         batch_size = l_images.shape[0]
         l_logits = logits[:batch_size]
         l_loss = F.cross_entropy(l_logits, l_targets, reduction='mean')
+
+        # GMM / Aleatoric uncertainty
+        if self.hparams.model.features_gmm:
+            l_feature_map = feature_map[:batch_size].detach()
+            self.running_gmm.update_running(l_feature_map, l_targets)
+            _, uw_feature_map = feature_map[batch_size:].detach().chunk(2)
+            uw_log_probs = self.running_gmm.log_prob(uw_feature_map)
 
         # Unsupervised loss
         us_logits, uw_logits = logits[batch_size:].chunk(2)
@@ -238,6 +257,9 @@ class FixMatch(LightningModule):
         result.log('train_loss_l', l_loss, on_epoch=True, on_step=False, sync_dist=True)
         result.log('train_loss_ul', u_loss, on_epoch=True, on_step=False, sync_dist=True)
         result.log('train_mean_mask', mask.mean(), on_epoch=True, on_step=False, sync_dist=True)
+        if self.hparams.model.features_gmm:
+            result.log('train_mean_log_lik_ul', uw_log_probs.mean(), on_epoch=True, on_step=False, sync_dist=True, prog_bar=True)
+            result.log('train_std_log_lik_ul', uw_log_probs.std(), on_epoch=True, on_step=False, sync_dist=True)
         return result
 
     def validation_step(self, batch, batch_ind):

@@ -137,7 +137,7 @@ class WideResNet(nn.Module):
         out = out.view(-1, self.channels)
         if self.after_bn_drop_rate > 0.0:
             out = F.dropout(out, p=self.after_bn_drop_rate, training=self.training)
-        return self.fc(out)
+        return self.fc(out), out
 
     def disable_batch_norm_update(self):
         for m in self.modules():

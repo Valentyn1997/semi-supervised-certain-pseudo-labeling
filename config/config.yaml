@@ -14,6 +14,7 @@ model: # Model params
   drop_type: Dropout  # Dropout / DropConnect / AlphaDropout / AfterBNDropout / UniformDropout
   drop_rate: 0.0
   spectral_norm: True
+  features_gmm: True
 
 # Data params
 data:
