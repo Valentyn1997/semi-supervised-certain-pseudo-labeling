@@ -30,18 +30,23 @@ class FixMatch(LightningModule):
 
         if self.hparams.model.drop_type == 'Dropout':
             self.model = WideResNet(depth=28, widen_factor=2, drop_rate=self.hparams.model.drop_rate,
+                                    spectral_normalise=self.hparams.model.spectral_norm,
                                     num_classes=len(datasets_collection.classes))
         elif self.hparams.model.drop_type == 'DropConnect':
             self.model = WideResNet(depth=28, widen_factor=2, drop_rate=0.0, weight_dropout=self.hparams.model.drop_rate,
+                                    spectral_normalise=self.hparams.model.spectral_norm,
                                     num_classes=len(datasets_collection.classes))
         elif self.hparams.model.drop_type == 'AlphaDropout':
             self.model = WideResNet(depth=28, widen_factor=2, drop_rate=self.hparams.model.drop_rate,
+                                    spectral_normalise=self.hparams.model.spectral_norm,
                                     num_classes=len(datasets_collection.classes), dropout_method=F.alpha_dropout)
         elif self.hparams.model.drop_type == 'AfterBNDropout':
             self.model = WideResNet(depth=28, widen_factor=2, num_classes=len(datasets_collection.classes),
+                                    spectral_normalise=self.hparams.model.spectral_norm,
                                     after_bn_drop_rate=self.hparams.model.drop_rate)
         elif self.hparams.model.drop_type == 'UniformDropout':
             self.model = WideResNet(depth=28, widen_factor=2, drop_rate=self.hparams.model.drop_rate,
+                                    spectral_normalise=self.hparams.model.spectral_norm,
                                     num_classes=len(datasets_collection.classes), dropout_method=uniform_dropout)
         else:
             raise NotImplementedError
@@ -79,7 +84,7 @@ class FixMatch(LightningModule):
                                                            self.datasets_collection.train_ul_dataset,
                                                            self.hparams.model.mu,
                                                            self.hparams.data.steps_per_epoch * self.hparams.data.batch_size.train,
-                                                           self.datasets_collection.val_dataset)
+                                                           self.datasets_collection.val_dataset if self.hparams.model.choose_threshold_on_val else None)
         if self.hparams.data.val_ratio > 0.0:
             self.val_dataset = self.datasets_collection.val_dataset
         else:
@@ -147,9 +152,12 @@ class FixMatch(LightningModule):
         uw_images = torch.cat([item[0][0] for item in composite_batch[1]])
         us_images = torch.cat([item[0][1] for item in composite_batch[1]])
 
-        v_targets = composite_batch[2][0][1]
-        v_images = composite_batch[2][0][0]
-        v_ids = composite_batch[2][0][2]
+        if len(composite_batch) > 2:
+            v_targets = composite_batch[2][0][1]
+            v_images = composite_batch[2][0][0]
+            v_ids = composite_batch[2][0][2]
+        else:
+            v_targets, v_images, v_ids = None, None, None
 
         return l_targets, l_images, u_targets, u_ids, uw_images, us_images, v_targets, v_images, v_ids
 
@@ -193,13 +201,15 @@ class FixMatch(LightningModule):
                 us_logits_ = torch.stack(us_logits_list)
 
             else:
-                v_logits = self(v_images).detach()
                 us_logits_ = self(us_images).detach()
+                if self.hparams.model.choose_threshold_on_val:
+                    v_logits = self(v_images).detach()
 
             self.model.enable_batch_norm_update()
 
-        v_pseudo_soft_targets = torch.softmax(v_logits, dim=-1)
-        v_scores, v_pseudo_targets = self.strategy.get_certainty_and_label(softmax_outputs=v_pseudo_soft_targets)
+        if self.hparams.model.choose_threshold_on_val:
+            v_pseudo_soft_targets = torch.softmax(v_logits, dim=-1)
+            v_scores, v_pseudo_targets = self.strategy.get_certainty_and_label(softmax_outputs=v_pseudo_soft_targets)
 
         us_pseudo_soft_targets = torch.softmax(us_logits_, dim=-1)
         us_scores, us_pseudo_targets = self.strategy.get_certainty_and_label(softmax_outputs=us_pseudo_soft_targets)
@@ -207,8 +217,10 @@ class FixMatch(LightningModule):
         # Statistics logging
         self.ul_w_logger.log_statistics(u_scores, u_targets, u_pseudo_targets, u_ids, current_epoch=self.trainer.current_epoch)
         self.ul_s_logger.log_statistics(us_scores, u_targets, us_pseudo_targets, u_ids, current_epoch=self.trainer.current_epoch)
-        self.val_logger.log_statistics(v_scores, v_targets, v_pseudo_targets, v_ids, current_epoch=self.trainer.current_epoch,
-                                       current_globalstep=self.trainer.global_step)
+
+        if self.hparams.model.choose_threshold_on_val:
+            self.val_logger.log_statistics(v_scores, v_targets, v_pseudo_targets, v_ids, current_epoch=self.trainer.current_epoch,
+                                           current_globalstep=self.trainer.global_step)
 
         mask = u_scores.ge(self.hparams.model.threshold).float()
 

@@ -3,6 +3,7 @@ import logging
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.nn.utils import spectral_norm
 
 from src.models.dropouts import WeightDropLinear, WeightDropConv2d
 
@@ -25,7 +26,7 @@ logger = logging.getLogger(__name__)
 
 class BasicBlock(nn.Module):
     def __init__(self, in_planes, out_planes, stride, drop_rate=0.0, weight_dropout=0.0, dropout_method=F.dropout,
-                 activate_before_residual=False):
+                 spectral_normalise=False, activate_before_residual=False):
         super(BasicBlock, self).__init__()
         if weight_dropout == 0.0:
             self.conv1 = nn.Conv2d(in_planes, out_planes, kernel_size=3, stride=stride, padding=1, bias=False)
@@ -35,6 +36,10 @@ class BasicBlock(nn.Module):
                                           bias=False)
             self.conv2 = WeightDropConv2d(weight_dropout, out_planes, out_planes, kernel_size=3, stride=1, padding=1, bias=False)
 
+        if spectral_normalise:
+            self.conv1 = spectral_norm(self.conv1)
+            self.conv2 = spectral_norm(self.conv2)
+
         self.bn1 = nn.BatchNorm2d(in_planes, momentum=0.001)
         self.relu1 = nn.LeakyReLU(negative_slope=0.1, inplace=True)
         self.bn2 = nn.BatchNorm2d(out_planes, momentum=0.001)
@@ -43,6 +48,9 @@ class BasicBlock(nn.Module):
         self.equalInOut = (in_planes == out_planes)
         self.convShortcut = (not self.equalInOut) and nn.Conv2d(in_planes, out_planes, kernel_size=1, stride=stride,
                                                                 padding=0, bias=False) or None
+        if spectral_normalise and isinstance(self.convShortcut, nn.Conv2d):
+            self.convShortcut = spectral_norm(self.convShortcut)
+
         self.dropout_method = dropout_method
         self.activate_before_residual = activate_before_residual
 
@@ -60,17 +68,18 @@ class BasicBlock(nn.Module):
 
 class NetworkBlock(nn.Module):
     def __init__(self, nb_layers, in_planes, out_planes, block, stride, drop_rate=0.0, weight_dropout=0.0,
-                 dropout_method=F.dropout, activate_before_residual=False):
+                 dropout_method=F.dropout, spectral_normalise=False, activate_before_residual=False):
         super(NetworkBlock, self).__init__()
         self.layer = self._make_layer(block, in_planes, out_planes, nb_layers, stride, drop_rate, weight_dropout, dropout_method,
-                                      activate_before_residual)
+                                      spectral_normalise, activate_before_residual)
 
-    def _make_layer(self, block, in_planes, out_planes, nb_layers, stride, drop_rate, weight_dropout, dropout_method,
+    def _make_layer(self, block, in_planes, out_planes, nb_layers, stride, drop_rate, weight_dropout, dropout_method, spectral_normalise,
                     activate_before_residual):
         layers = []
         for i in range(int(nb_layers)):
             layers.append(block(i == 0 and in_planes or out_planes, out_planes,
-                                i == 0 and stride or 1, drop_rate, weight_dropout, dropout_method, activate_before_residual))
+                                i == 0 and stride or 1, drop_rate, weight_dropout, dropout_method, spectral_normalise,
+                                activate_before_residual))
         return nn.Sequential(*layers)
 
     def forward(self, x):
@@ -79,22 +88,25 @@ class NetworkBlock(nn.Module):
 
 class WideResNet(nn.Module):
     def __init__(self, num_classes, depth=28, widen_factor=2, drop_rate=0.0, weight_dropout=0.0, dropout_method=F.dropout,
-                 after_bn_drop_rate=0.0):
+                 after_bn_drop_rate=0.0, spectral_normalise=False):
         super(WideResNet, self).__init__()
         channels = [16, 16 * widen_factor, 32 * widen_factor, 64 * widen_factor]
         assert ((depth - 4) % 6 == 0)
         n = (depth - 4) / 6
         block = BasicBlock
         # 1st conv before any network block
-        self.conv1 = nn.Conv2d(3, channels[0], kernel_size=3, stride=1,
-                               padding=1, bias=False)
+        self.conv1 = nn.Conv2d(3, channels[0], kernel_size=3, stride=1, padding=1, bias=False)
+        if spectral_normalise:
+            self.conv1 = spectral_norm(self.conv1)
         # 1st block
         self.block1 = NetworkBlock(n, channels[0], channels[1], block, 1, drop_rate, weight_dropout, dropout_method,
-                                   activate_before_residual=True)
+                                   spectral_normalise, activate_before_residual=True)
         # 2nd block
-        self.block2 = NetworkBlock(n, channels[1], channels[2], block, 2, drop_rate, weight_dropout, dropout_method)
+        self.block2 = NetworkBlock(n, channels[1], channels[2], block, 2, drop_rate, weight_dropout, dropout_method,
+                                   spectral_normalise)
         # 3rd block
-        self.block3 = NetworkBlock(n, channels[2], channels[3], block, 2, drop_rate, weight_dropout, dropout_method)
+        self.block3 = NetworkBlock(n, channels[2], channels[3], block, 2, drop_rate, weight_dropout, dropout_method,
+                                   spectral_normalise)
         # global average pooling and classifier
         self.bn1 = nn.BatchNorm2d(channels[3], momentum=0.001)
         self.relu = nn.LeakyReLU(negative_slope=0.1, inplace=True)
