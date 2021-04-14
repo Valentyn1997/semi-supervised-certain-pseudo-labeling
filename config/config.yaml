@@ -2,6 +2,7 @@
 model: # Model params
   mu: 7  #
   threshold: 0.95
+  conf_threshold: 0.99  # this additional threshold is needed for certainty strategies that measure model confidence (e.g. BALDCertainty)
   choose_threshold_on_val: False
   choose_threshold_on_val_freq: 128  # n data-steps, after which threshold will be updated
   choose_threshold_on_val_acc: 0.95  # Choosing threshold, which guarantees this accuracy
