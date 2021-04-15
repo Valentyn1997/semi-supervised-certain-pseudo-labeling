@@ -15,6 +15,8 @@ model: # Model params
   drop_rate: 0.0
   spectral_norm: True
   features_gmm: True
+  log_prob_threshold: 0.0
+  u_update_gmm: True
 
 # Data params
 data:
@@ -40,6 +42,7 @@ exp:
   log_ul_s_statistics: False  # Logging the statistics about unlabelled strongly data: batch / image / False
   log_val_statistics: False  # Logging the statistics about val data: batch / image / False
   log_statistics_freq: 10  # CSV-files saving frequency
+  log_pl_accuracy: True  # Accuracy of pseudo-labelling
   max_epochs: 1024  # Total number of training epochs to perform.
   early_stopping: False
   early_stopping_patience: 100  #  Number of epochs to wait for early stopping, used if early_stopping is True
