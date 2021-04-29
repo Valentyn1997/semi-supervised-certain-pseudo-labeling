@@ -30,23 +30,29 @@ class FixMatch(LightningModule):
         self.hparams = args  # Will be logged to mlflow
 
         if self.hparams.model.drop_type == 'Dropout':
-            self.model = WideResNet(depth=28, widen_factor=2, drop_rate=self.hparams.model.drop_rate,
+            self.model = WideResNet(depth=args.model.wrn.depth, widen_factor=args.model.wrn.widen_factor,
+                                    drop_rate=self.hparams.model.drop_rate,
                                     spectral_normalise=self.hparams.model.spectral_norm,
                                     num_classes=len(datasets_collection.classes))
         elif self.hparams.model.drop_type == 'DropConnect':
-            self.model = WideResNet(depth=28, widen_factor=2, drop_rate=0.0, weight_dropout=self.hparams.model.drop_rate,
+            self.model = WideResNet(depth=args.model.wrn.depth, widen_factor=args.model.wrn.widen_factor,
+                                    drop_rate=0.0,
+                                    weight_dropout=self.hparams.model.drop_rate,
                                     spectral_normalise=self.hparams.model.spectral_norm,
                                     num_classes=len(datasets_collection.classes))
         elif self.hparams.model.drop_type == 'AlphaDropout':
-            self.model = WideResNet(depth=28, widen_factor=2, drop_rate=self.hparams.model.drop_rate,
+            self.model = WideResNet(depth=args.model.wrn.depth, widen_factor=args.model.wrn.widen_factor,
+                                    drop_rate=self.hparams.model.drop_rate,
                                     spectral_normalise=self.hparams.model.spectral_norm,
                                     num_classes=len(datasets_collection.classes), dropout_method=F.alpha_dropout)
         elif self.hparams.model.drop_type == 'AfterBNDropout':
-            self.model = WideResNet(depth=28, widen_factor=2, num_classes=len(datasets_collection.classes),
+            self.model = WideResNet(depth=args.model.wrn.depth, widen_factor=args.model.wrn.widen_factor,
+                                    num_classes=len(datasets_collection.classes),
                                     spectral_normalise=self.hparams.model.spectral_norm,
                                     after_bn_drop_rate=self.hparams.model.drop_rate)
         elif self.hparams.model.drop_type == 'UniformDropout':
-            self.model = WideResNet(depth=28, widen_factor=2, drop_rate=self.hparams.model.drop_rate,
+            self.model = WideResNet(depth=args.model.wrn.depth, widen_factor=args.model.wrn.widen_factor,
+                                    drop_rate=self.hparams.model.drop_rate,
                                     spectral_normalise=self.hparams.model.spectral_norm,
                                     num_classes=len(datasets_collection.classes), dropout_method=uniform_dropout)
         else:
@@ -248,7 +254,11 @@ class FixMatch(LightningModule):
 
         # Epistemic uncertainty
         if self.hparams.model.features_gmm:
-            log_lik_mask = uw_log_probs.ge(self.hparams.model.log_prob_threshold)
+            if self.hparams.dynamic_log_prob_threshold:
+                log_prob_threshold = self.running_gmm.log_prob(l_feature_map).mean()
+            else:
+                log_prob_threshold = self.hparams.model.log_prob_threshold
+            log_lik_mask = uw_log_probs.ge(log_prob_threshold)
             mask = torch.logical_or(mask, log_lik_mask).float()
 
             if self.hparams.model.u_update_gmm:
@@ -273,6 +283,9 @@ class FixMatch(LightningModule):
         if self.hparams.model.features_gmm:
             result.log('train_mean_log_lik_ul', uw_log_probs.mean(), on_epoch=True, on_step=False, sync_dist=True, prog_bar=True)
             result.log('train_std_log_lik_ul', uw_log_probs.std(), on_epoch=True, on_step=False, sync_dist=True)
+            if self.hparams.dynamic_log_prob_threshold:
+                result.log('log_prob_threshold', uw_log_probs.mean(), on_epoch=True, on_step=False, sync_dist=True,
+                           prog_bar=True)
         if self.hparams.exp.log_pl_accuracy:
             result.log('train_pl_accuracy', (u_pseudo_targets[mask.bool()] == u_targets[mask.bool()]).float().mean(),
                        on_epoch=True, on_step=False, sync_dist=True)

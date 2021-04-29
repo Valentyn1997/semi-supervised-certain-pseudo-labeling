@@ -17,6 +17,10 @@ model: # Model params
   features_gmm: True
   log_prob_threshold: 0.0
   u_update_gmm: True
+  dynamic_log_prob_threshold: True  # log_prob_threshold defined as mean log_prob on train_batch
+  wrn:
+    depth: ???
+    widen_factor: ???
 
 # Data params
 data:
