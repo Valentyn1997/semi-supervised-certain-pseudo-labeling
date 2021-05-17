@@ -19,6 +19,7 @@ model: # Model params
   u_update_gmm: True
   dynamic_log_prob_threshold: True  # log_prob_threshold defined as mean log_prob on train_batch
   wrn:
+    scale: 2
     depth: ???
     widen_factor: ???
 
@@ -35,6 +36,7 @@ data:
   weak_aug:
     flip: True
     random_pad_and_crop: True
+    crop_size: 32
 
 # Experiment
 exp:

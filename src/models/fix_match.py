@@ -32,27 +32,32 @@ class FixMatch(LightningModule):
         if self.hparams.model.drop_type == 'Dropout':
             self.model = WideResNet(depth=args.model.wrn.depth, widen_factor=args.model.wrn.widen_factor,
                                     drop_rate=self.hparams.model.drop_rate,
+                                    scale=self.hparams.model.wrn.scale,
                                     spectral_normalise=self.hparams.model.spectral_norm,
                                     num_classes=len(datasets_collection.classes))
         elif self.hparams.model.drop_type == 'DropConnect':
             self.model = WideResNet(depth=args.model.wrn.depth, widen_factor=args.model.wrn.widen_factor,
                                     drop_rate=0.0,
+                                    scale=self.hparams.model.wrn.scale,
                                     weight_dropout=self.hparams.model.drop_rate,
                                     spectral_normalise=self.hparams.model.spectral_norm,
                                     num_classes=len(datasets_collection.classes))
         elif self.hparams.model.drop_type == 'AlphaDropout':
             self.model = WideResNet(depth=args.model.wrn.depth, widen_factor=args.model.wrn.widen_factor,
                                     drop_rate=self.hparams.model.drop_rate,
+                                    scale=self.hparams.model.wrn.scale,
                                     spectral_normalise=self.hparams.model.spectral_norm,
                                     num_classes=len(datasets_collection.classes), dropout_method=F.alpha_dropout)
         elif self.hparams.model.drop_type == 'AfterBNDropout':
             self.model = WideResNet(depth=args.model.wrn.depth, widen_factor=args.model.wrn.widen_factor,
                                     num_classes=len(datasets_collection.classes),
+                                    scale=self.hparams.model.wrn.scale,
                                     spectral_normalise=self.hparams.model.spectral_norm,
                                     after_bn_drop_rate=self.hparams.model.drop_rate)
         elif self.hparams.model.drop_type == 'UniformDropout':
             self.model = WideResNet(depth=args.model.wrn.depth, widen_factor=args.model.wrn.widen_factor,
                                     drop_rate=self.hparams.model.drop_rate,
+                                    scale=self.hparams.model.wrn.scale,
                                     spectral_normalise=self.hparams.model.spectral_norm,
                                     num_classes=len(datasets_collection.classes), dropout_method=uniform_dropout)
         else:
