@@ -264,7 +264,13 @@ class FixMatch(LightningModule):
             else:
                 log_prob_threshold = self.hparams.model.log_prob_threshold
             log_lik_mask = uw_log_probs.ge(log_prob_threshold)
-            mask = torch.logical_or(mask, log_lik_mask).float()
+
+            if self.hparams.model.mask_operation == 'or':
+                mask = torch.logical_or(mask, log_lik_mask).float()
+            elif self.hparams.model.mask_operation == 'and':
+                mask = torch.logical_and(mask, log_lik_mask).float()
+            else:
+                raise NotImplementedError()
 
             if self.hparams.model.u_update_gmm:
                 self.running_gmm.update_running(uw_feature_map[log_lik_mask], u_pseudo_targets[log_lik_mask])

@@ -18,6 +18,7 @@ model: # Model params
   log_prob_threshold: 0.0
   u_update_gmm: True
   dynamic_log_prob_threshold: True  # log_prob_threshold defined as mean log_prob on train_batch
+  mask_operation: or
   wrn:
     scale: 2
     depth: ???
