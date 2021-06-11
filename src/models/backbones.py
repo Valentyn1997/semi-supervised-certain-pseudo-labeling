@@ -88,10 +88,10 @@ class NetworkBlock(nn.Module):
 
 class WideResNet(nn.Module):
     def __init__(self, num_classes, depth=28, widen_factor=2, drop_rate=0.0, weight_dropout=0.0, dropout_method=F.dropout,
-                 after_bn_drop_rate=0.0, spectral_normalise=False):
+                 after_bn_drop_rate=0.0, spectral_normalise=False, scale=4):
         super(WideResNet, self).__init__()
-        channels = [16, 16 * widen_factor, 32 * widen_factor, 64 * widen_factor]
-        assert ((depth - 4) % 6 == 0)
+        channels = [16, 16 * widen_factor, 16 * scale * widen_factor, 16 * scale**2 * widen_factor]
+        # assert ((depth - 4) % 6 == 0)
         n = (depth - 4) / 6
         block = BasicBlock
         # 1st conv before any network block

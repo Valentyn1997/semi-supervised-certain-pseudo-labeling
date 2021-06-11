@@ -38,9 +38,10 @@ def main(args: DictConfig):
     set_seed(args)
     basic_transform = BasicTransformation(source=args.data.source)
     train_l_transform = WeakAugment(basic_transform=basic_transform, flip=args.data.weak_aug.flip,
-                                    random_pad_and_crop=args.data.weak_aug.random_pad_and_crop)
+                                    random_pad_and_crop=args.data.weak_aug.random_pad_and_crop,
+                                    crop_size=args.data.weak_aug.crop_size)
     train_ul_transform = WeakStrongAugment(weak_augment=train_l_transform,
-                                           strong_augment=StrongAugment(basic_transform))
+                                           strong_augment=StrongAugment(basic_transform, crop_size=args.data.weak_aug.crop_size))
     datasets_collection = SLLDatasetsCollection(source=args.data.source,
                                                 n_labelled=args.data.n_labelled,
                                                 val_ratio=args.data.val_ratio,

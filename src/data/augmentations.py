@@ -275,11 +275,11 @@ class RandomPadandCrop(object):
 
 
 class WeakAugment(object):
-    def __init__(self, basic_transform: BasicTransformation, flip=True, random_pad_and_crop=True):
+    def __init__(self, basic_transform: BasicTransformation, flip=True, random_pad_and_crop=True, crop_size=32):
         self.weak = []
 
         if random_pad_and_crop:
-            self.weak.append(transforms.RandomCrop(size=32, padding=int(32 * 0.125), padding_mode='reflect'))
+            self.weak.append(transforms.RandomCrop(size=crop_size, padding=int(crop_size * 0.125), padding_mode='reflect'))
 
         if flip:
             self.weak.append(transforms.RandomHorizontalFlip())
@@ -292,10 +292,10 @@ class WeakAugment(object):
 
 
 class StrongAugment(object):
-    def __init__(self, basic_transform: BasicTransformation, also_weak=True):
+    def __init__(self, basic_transform: BasicTransformation, also_weak=True, crop_size=32):
         self.strong = []
         if also_weak:
-            self.strong.append(transforms.RandomCrop(size=32, padding=int(32 * 0.125), padding_mode='reflect'))
+            self.strong.append(transforms.RandomCrop(size=crop_size, padding=int(crop_size * 0.125), padding_mode='reflect'))
             self.strong.append(transforms.RandomHorizontalFlip())
         self.strong.append(RandAugment(n=2, m=10))
         self.strong.append(basic_transform)
